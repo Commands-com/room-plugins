@@ -1,0 +1,8 @@
+{
+  "allowed": [
+    {
+      "name": "template-room",
+      "sha256": "<fill-with-generated-hash>"
+    }
+  ]
+}

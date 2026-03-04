@@ -1,0 +1,39 @@
+{
+  "id": "template_room",
+  "name": "Template Room",
+  "version": "1.0.0",
+  "orchestratorType": "template_room",
+  "description": "Minimal external room orchestrator template",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["worker"],
+    "optional": [],
+    "forbidden": ["implementer", "reviewer"],
+    "minCount": {
+      "worker": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 2, "min": 1, "max": 20 },
+    "maxTurns": { "default": 8, "min": 2, "max": 200 },
+    "turnFloorRole": "worker",
+    "turnFloorFormula": "1 + N"
+  },
+  "display": {
+    "typeLabel": "Template Room",
+    "cycleNoun": "Cycle",
+    "reportTitle": "Template Room Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "fanOut": "Workers are handling tasks",
+      "singleTurn": "Worker turn in progress",
+      "synthesis": "Summarizing responses",
+      "planning": "Planning next tasks"
+    },
+    "defaultRoster": [
+      { "role": "worker", "displayName": "Worker 1" },
+      { "role": "worker", "displayName": "Worker 2" }
+    ],
+    "defaultAddRole": "worker"
+  }
+}
