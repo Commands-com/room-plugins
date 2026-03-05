@@ -1,47 +1,82 @@
-# Getting Started (Rooms)
+# Getting Started: Build a High-Quality Room Plugin
 
-## 1. Install room plugins
+This guide is for Commands Desktop users who want to build a production-grade room plugin.
+
+## 1. Clone and Install
 
 ```bash
-cd /Users/dtannen/Code/commands-com-agent-rooms
+git clone https://github.com/Commands-com/room-plugins.git
+cd room-plugins
 ./scripts/install-room-plugins.sh
 ```
 
-## 2. Restart Commands Desktop
+Restart Commands Desktop after install.
 
-Close and reopen desktop so the room plugin registry reloads.
+## 2. Confirm the Reference Plugin Works
 
-## 3. Verify plugin appears
+In the app:
 
-In Desktop:
+1. Create a room.
+2. Choose `template_room` as the room type.
+3. Add at least one worker participant.
+4. Use objective text like: `Reply with one sentence saying your name`.
 
-1. Open room creation.
-2. Check orchestrator type list.
-3. Confirm `template_room` appears.
+Expected result: one fan-out cycle runs, then the room stops with a summary similar to:
 
-## 4. Create a test room
+`template_room completed one fan-out cycle (N responses)`
 
-Create a room with `template_room` and at least one worker participant.
-
-The template fans out one request to workers, then stops with a summary reason.
-
-## 5. Build your own room type
-
-Duplicate template:
+## 3. Create Your Plugin
 
 ```bash
 cp -R ./room-plugins/template-room ./room-plugins/my-room
 ```
 
-Then edit:
+Update both files:
 
 - `./room-plugins/my-room/manifest.json`
 - `./room-plugins/my-room/index.js`
 
-Regenerate allowlist:
+Keep `manifest.json` and the exported `manifest` in `index.js` exactly aligned.
+
+## 4. Reinstall and Reload
+
+```bash
+./scripts/install-room-plugins.sh
+```
+
+Then restart Commands Desktop.
+
+## 5. Validate In-App Behavior
+
+Test these cases before sharing your plugin:
+
+1. Normal start -> first decision from `onRoomStart` executes.
+2. Fan-out path -> `onFanOutComplete` receives all successful responses.
+3. Single-turn path -> `onTurnResult` receives `{ agentId, response, usage }`.
+4. Pause/resume path -> room resumes cleanly and does not replay stale decisions.
+5. Disconnect path -> `onEvent({ type: 'participant_disconnected' })` returns a safe recovery decision.
+6. Manual/semi-auto approval path -> pending decisions are still valid after edit and approval.
+
+## 6. Publish Safely
+
+When you change plugin code, regenerate allowlist hashes before publishing:
 
 ```bash
 node ./scripts/generate-room-allowlist.mjs \
   ~/.commands-agent/room-plugins \
   ~/.commands-agent/room-plugins-allowed.json
 ```
+
+This keeps plugin integrity checks accurate.
+
+## 7. Use the Full Contract While Building
+
+Read [`docs/CONTRACT.md`](./docs/CONTRACT.md) for:
+
+- exact manifest schema and allowed keys
+- decision payload rules
+- lifecycle hook signatures
+- context API (`invokeLLM`, state, metrics, reports)
+- timeout, pause, and failure semantics
+- loader security and allowlist behavior
+

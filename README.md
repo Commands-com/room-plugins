@@ -1,101 +1,63 @@
-# Commands.com Agent Rooms
+# Commands.com Room Plugins
 
-External room orchestrator plugins for Commands.com Desktop.
+Build external room orchestrator plugins for Commands Desktop without modifying `Commands.app`.
 
-This repo is for adding custom room types without modifying core desktop code.
+This repo is meant for desktop users (including DMG installs) who want to create and ship custom room types.
 
-## Important behavior
+## What You Get
 
-- Built-in room plugins still load (`review_cycle`, `war_room`, `break_room`, `ui_ux_testing`).
-- External room plugins are additive.
-- Room plugins are instantiated per room run (`createPlugin()` per resolve).
+- `room-plugins/template-room`: reference implementation you can copy
+- `scripts/install-room-plugins.sh`: install plugins into the desktop plugin directory
+- `scripts/generate-room-allowlist.mjs`: generate secure allowlist with SHA-256 hashes
+- `docs/CONTRACT.md`: full plugin manifest, hook, and runtime contract
+- `GETTING_STARTED.md`: end-to-end workflow from install to app testing
 
-## Repo layout
-
-```text
-commands-com-agent-rooms/
-  room-plugins/
-    template-room/
-      manifest.json
-      index.js
-  scripts/
-    install-room-plugins.sh
-    compute-room-plugin-sha256.mjs
-    generate-room-allowlist.mjs
-  docs/
-    CONTRACT.md
-  room-plugins-allowed.json.example
-  README.md
-  GETTING_STARTED.md
-```
-
-## Quick install (recommended)
+## Install Plugins Into Commands Desktop
 
 ```bash
-cd /Users/dtannen/Code/commands-com-agent-rooms
+git clone https://github.com/Commands-com/room-plugins.git
+cd room-plugins
 ./scripts/install-room-plugins.sh
 ```
 
-This installs plugins to:
+This installs to:
 
 - `~/.commands-agent/room-plugins`
 - `~/.commands-agent/room-plugins-allowed.json`
 
 Then restart Commands Desktop.
 
-## Manual install
+## Build Your Own Room Type
+
+1. Copy the reference plugin:
 
 ```bash
-mkdir -p ~/.commands-agent/room-plugins
-rsync -a --delete --exclude '.DS_Store' --exclude '.git/' \
-  ./room-plugins/ ~/.commands-agent/room-plugins/
-node ./scripts/generate-room-allowlist.mjs \
-  ~/.commands-agent/room-plugins \
-  ~/.commands-agent/room-plugins-allowed.json
+cp -R ./room-plugins/template-room ./room-plugins/my-room
 ```
 
-## Use repo path directly (optional)
+2. Update:
+
+- `./room-plugins/my-room/manifest.json`
+- `./room-plugins/my-room/index.js`
+
+3. Reinstall + regenerate allowlist:
 
 ```bash
-export COMMANDS_AGENT_ROOM_PLUGINS_DIR=/Users/dtannen/Code/commands-com-agent-rooms/room-plugins
+./scripts/install-room-plugins.sh
 ```
 
-If you do this, put allowlist at:
+4. Restart Commands Desktop and create a room using your `manifest.orchestratorType`.
 
-- `/Users/dtannen/Code/commands-com-agent-rooms/room-plugins-allowed.json`
+## Security and Loading
 
-## Security model
+- Built-in room types continue to load.
+- External room types are additive.
+- Plugin directory names must be allowlisted.
+- `manifest.json` and `index.js` must be regular files (no symlinks).
+- If allowlist entry includes `sha256`, plugin integrity is enforced.
 
-- Default secure mode: allowlist + optional integrity hash pin per plugin.
-- Dev bypass exists but should not be used in production:
+## Full Authoring Docs
 
-```bash
-COMMANDS_AGENT_DEV=1
-COMMANDS_AGENT_TRUST_ALL_PLUGINS=1
-```
+- [Getting Started](./GETTING_STARTED.md)
+- [Room Plugin Contract](./docs/CONTRACT.md)
 
-## Add a new room plugin
-
-1. Copy `room-plugins/template-room` to a new folder.
-2. Update `manifest.json` (`id`, `orchestratorType`, roles, limits).
-3. Implement orchestration hooks in `index.js`.
-4. Regenerate allowlist with hashes:
-
-```bash
-node ./scripts/generate-room-allowlist.mjs \
-  ~/.commands-agent/room-plugins \
-  ~/.commands-agent/room-plugins-allowed.json
-```
-
-## Contract
-
-See [`docs/CONTRACT.md`](./docs/CONTRACT.md).
-
-## Troubleshooting
-
-- Room type not visible:
-  - Check `manifest.json` schema, `orchestratorType` uniqueness, and allowlist.
-- Plugin rejected:
-  - Check manifest-export parity (`index.js` exported `manifest` must match `manifest.json`).
-- Hash mismatch:
-  - Regenerate allowlist after any file change.
