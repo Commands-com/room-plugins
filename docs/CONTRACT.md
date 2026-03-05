@@ -251,12 +251,15 @@ Hooks are called in a serialized queue (`hookQueue`), never concurrently.
 {
   agentId: string,
   response: string,
-  usage: {
+  usage: {                       // may be null when token reporting is unavailable
     input_tokens: number,
     output_tokens: number,
-  }
+  } | null
 }
 ```
+
+> **Note:** `usage` can be `null` when the runtime has no token data for the turn.
+> Always access token fields defensively (e.g. `turnResult.usage?.input_tokens ?? 0`).
 
 Return next decision or `null`.
 
@@ -269,7 +272,7 @@ Return next decision or `null`.
   {
     agentId: string,
     response: string,
-    usage: { input_tokens: number, output_tokens: number },
+    usage: { input_tokens: number, output_tokens: number } | null,
     observedRevision?: string | null,
     rejected?: boolean,
     rejectionReason?: string,
@@ -277,6 +280,9 @@ Return next decision or `null`.
   }
 ]
 ```
+
+> **Note:** `usage` can be `null` per response when token reporting is unavailable.
+> Always access token fields defensively (e.g. `r.usage?.input_tokens ?? 0`).
 
 Return next decision or `null`.
 
@@ -297,6 +303,13 @@ Runtime currently emits:
 ```
 
 For disconnect events, return a recovery decision when possible.
+
+> **Important:** During an active fan-out, disconnect events are dispatched for
+> state mutation only — return values from `onEvent(participant_disconnected)` are
+> **not** executed as decisions in that context. Use the hook to update plugin state
+> (e.g. mark the participant as lost) and handle recovery when the fan-out
+> completes via `onFanOutComplete`. Outside of fan-out, returned decisions are
+> applied normally.
 
 For `user_edit_state`, mutate plugin state directly via `ctx.setState(...)`; return values are not used for edit application.
 
@@ -421,7 +434,7 @@ Use this checklist before publishing:
 
 1. Deterministic state transitions: every hook produces predictable next decisions.
 2. Safe start behavior: `onRoomStart` handles missing/invalid participants and can stop with clear reason.
-3. Disconnect resilience: `onEvent(participant_disconnected)` returns a recovery decision or controlled stop.
+3. Disconnect resilience: `onEvent(participant_disconnected)` updates state and returns a recovery decision or controlled stop (note: during fan-out, the returned decision is not executed — handle recovery in `onFanOutComplete` instead).
 4. Pause/resume correctness: no infinite pause loop; pending decisions can be refreshed.
 5. Bounded prompts: trim/sanitize plugin-generated prompt text to avoid oversized payloads.
 6. Limit-aware logic: stop or converge before `maxTurns`, `maxCycles`, and timeout budgets hit unexpectedly.

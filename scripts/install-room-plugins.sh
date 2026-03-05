@@ -58,6 +58,36 @@ echo "Source: ${SOURCE_DIR}"
 echo "Dest:   ${DEST_DIR}"
 
 shopt -s nullglob
+
+# Collect source plugin names for stale-directory pruning (Bash 3-compatible).
+# Names are bracketed with colons on both sides so case-matching is exact
+# (e.g. ":template-room:" will not match a dest named "template").
+source_plugin_names=":"
+for plugin_path in "${SOURCE_DIR}"/*; do
+  [[ -d "${plugin_path}" ]] || continue
+  source_plugin_names="${source_plugin_names}$(basename "${plugin_path}"):"
+done
+
+# Remove destination plugin directories that no longer exist in source.
+# Safety: only delete directories this installer previously managed.
+for dest_path in "${DEST_DIR}"/*; do
+  [[ -d "${dest_path}" ]] || continue
+  dest_name="$(basename "${dest_path}")"
+  case "${source_plugin_names}" in
+    *":${dest_name}:"*)
+      ;; # still exists in source, keep it
+    *)
+      if [[ -f "${dest_path}/.installed-by-commands-room-plugins" ]]; then
+        echo "[${dest_name}] removing stale plugin directory"
+        rm -rf "${dest_path}"
+      else
+        echo "[${dest_name}] skipping removal (not managed by this installer)"
+      fi
+      ;;
+  esac
+done
+
+# Sync each source plugin to destination
 for plugin_path in "${SOURCE_DIR}"/*; do
   [[ -d "${plugin_path}" ]] || continue
   plugin_name="$(basename "${plugin_path}")"
@@ -65,8 +95,11 @@ for plugin_path in "${SOURCE_DIR}"/*; do
 
   echo "[${plugin_name}] syncing"
   mkdir -p "${dest_plugin_path}"
-  rsync -a --delete --exclude '.DS_Store' --exclude '.git/' --exclude 'node_modules/' \
+  rsync -a --delete --exclude '.DS_Store' --exclude '.git' --exclude 'node_modules/' \
     "${plugin_path}/" "${dest_plugin_path}/"
+
+  # Marker used by prune step to avoid deleting third-party folders.
+  echo "installed by commands-com-agent-rooms" > "${dest_plugin_path}/.installed-by-commands-room-plugins"
 
   if [[ "${INSTALL_DEPS}" -eq 1 && -f "${dest_plugin_path}/package.json" ]]; then
     echo "[${plugin_name}] npm install --omit=dev"

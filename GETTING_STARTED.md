@@ -2,6 +2,15 @@
 
 This guide is for Commands Desktop users who want to build a production-grade room plugin.
 
+## Prerequisites
+
+Before you begin, ensure the following tools are installed:
+
+- **Node.js** >= 18 (required to run hash/allowlist scripts and install plugin dependencies)
+- **npm** (bundled with Node.js)
+- **rsync** (used by the install script to sync plugin files)
+- **bash** (the install script uses `bash` with `set -euo pipefail`)
+
 ## 1. Clone and Install
 
 ```bash
@@ -52,9 +61,9 @@ Test these cases before sharing your plugin:
 
 1. Normal start -> first decision from `onRoomStart` executes.
 2. Fan-out path -> `onFanOutComplete` receives all successful responses.
-3. Single-turn path -> `onTurnResult` receives `{ agentId, response, usage }`.
+3. Single-turn path -> `onTurnResult` receives `{ agentId, response, usage }` (note: `usage` may be `null`).
 4. Pause/resume path -> room resumes cleanly and does not replay stale decisions.
-5. Disconnect path -> `onEvent({ type: 'participant_disconnected' })` returns a safe recovery decision.
+5. Disconnect path -> `onEvent({ type: 'participant_disconnected' })` updates state and returns a safe recovery decision (note: during fan-out, returned decisions are not executed — handle recovery in `onFanOutComplete`).
 6. Manual/semi-auto approval path -> pending decisions are still valid after edit and approval.
 
 ## 6. Publish Safely
