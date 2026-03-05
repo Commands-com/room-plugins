@@ -65,6 +65,7 @@ Test these cases before sharing your plugin:
 4. Pause/resume path -> room resumes cleanly and does not replay stale decisions.
 5. Disconnect path -> `onEvent({ type: 'participant_disconnected' })` updates state and returns a safe recovery decision (note: during fan-out, returned decisions are not executed — handle recovery in `onFanOutComplete`).
 6. Manual/semi-auto approval path -> pending decisions are still valid after edit and approval.
+7. Dashboard path -> every dashboard panel key has matching `ctx.emitMetrics({ [panelKey]: ... })` data and renders correctly.
 
 ## 6. Publish Safely
 
@@ -89,3 +90,6 @@ Read [`docs/CONTRACT.md`](./docs/CONTRACT.md) for:
 - timeout, pause, and failure semantics
 - loader security and allowlist behavior
 
+For dashboard authoring details (panel types, field shapes, and metrics payloads), use:
+
+- [`docs/DASHBOARD_GUIDE.md`](./docs/DASHBOARD_GUIDE.md)

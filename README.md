@@ -10,6 +10,7 @@ This repo is meant for desktop users (including DMG installs) who want to create
 - `scripts/install-room-plugins.sh`: install plugins into the desktop plugin directory
 - `scripts/generate-room-allowlist.mjs`: generate secure allowlist with SHA-256 hashes
 - `docs/CONTRACT.md`: full plugin manifest, hook, and runtime contract
+- `docs/DASHBOARD_GUIDE.md`: practical dashboard panel + metrics authoring guide
 - `GETTING_STARTED.md`: end-to-end workflow from install to app testing
 
 ## Install Plugins Into Commands Desktop
@@ -60,4 +61,4 @@ cp -R ./room-plugins/template-room ./room-plugins/my-room
 
 - [Getting Started](./GETTING_STARTED.md)
 - [Room Plugin Contract](./docs/CONTRACT.md)
-
+- [Dashboard Guide](./docs/DASHBOARD_GUIDE.md)

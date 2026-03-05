@@ -147,6 +147,14 @@ Allowed keys:
 
 - `panels` (required array when `dashboard` is provided)
 
+Important behavior:
+
+- dashboard panel data is read from `metrics[panel.key]`
+- use `ctx.emitMetrics({ [panelKey]: value })` to populate each panel
+- panel-specific field validation is lightweight, so malformed panel config can load but render poorly
+
+For exact panel schemas and concrete examples, see [`DASHBOARD_GUIDE.md`](./DASHBOARD_GUIDE.md).
+
 ### 4.5 `display`
 
 Allowed keys:
@@ -449,4 +457,3 @@ Start from:
 - `room-plugins/template-room/index.js`
 
 Then iterate with `GETTING_STARTED.md` and reinstall using `./scripts/install-room-plugins.sh`.
-
