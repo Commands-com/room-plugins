@@ -728,23 +728,29 @@ export function selectActivePromotedProposals(state, config) {
 }
 
 export function buildPendingDecision(ctx, state, config) {
+  let targets = null;
+
   if (state.pendingFanOut === 'baseline') {
+    targets = buildBaselineTargets(ctx, state, config);
+  } else if (state.pendingFanOut === 'discovery') {
+    targets = buildDiscoveryTargets(ctx, state, config);
+  } else if (state.pendingFanOut === 'cycle' && state.activePromotedProposals.length > 0) {
+    targets = buildCycleTargets(ctx, state, config);
+  }
+
+  if (!targets) return null;
+
+  // Issue 4: Never return an empty fan_out targets array – the orchestrator
+  // contract requires at least one target.  Return a pause instead.
+  if (targets.length === 0) {
     return {
-      type: 'fan_out',
-      targets: buildBaselineTargets(ctx, state, config),
+      type: 'pause',
+      reason: 'no participants available for fan-out',
     };
   }
-  if (state.pendingFanOut === 'discovery') {
-    return {
-      type: 'fan_out',
-      targets: buildDiscoveryTargets(ctx, state, config),
-    };
-  }
-  if (state.pendingFanOut === 'cycle' && state.activePromotedProposals.length > 0) {
-    return {
-      type: 'fan_out',
-      targets: buildCycleTargets(ctx, state, config),
-    };
-  }
-  return null;
+
+  return {
+    type: 'fan_out',
+    targets,
+  };
 }

@@ -1,7 +1,48 @@
 import { IMPLEMENTATION_FIDELITY_PATTERNS, SIMD_GAP_PATTERNS } from './constants.js';
 import { getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
 import { parseWorkerEnvelope } from './envelope.js';
-import { safeTrim } from './utils.js';
+import { resolveAndVerifyPath, safeTrim } from './utils.js';
+
+/**
+ * Determine the set of lanes that are allowed to submit build results.
+ */
+const BUILDER_CAPABLE_LANES = new Set(['builder', 'builder_explorer_auditor']);
+
+/**
+ * Determine the set of lanes that are allowed to submit audit findings.
+ */
+const AUDITOR_CAPABLE_LANES = new Set(['auditor', 'auditor_explorer', 'builder_explorer_auditor']);
+
+/**
+ * Verify that critical artifact paths reported in a builder result actually
+ * exist under the allowed workspace/output roots.  Returns true only when all
+ * essential evidence files are present.
+ */
+function verifyResultArtifacts(result, config) {
+  const roots = [config.workspacePath, config.outputDir].filter(Boolean);
+  if (roots.length === 0) return true; // no roots to verify against
+
+  // Require a non-empty file path for every successful step.
+  // Reject results that claim ok without providing evidence paths.
+  if (result.compile?.ok) {
+    if (!result.compile.binaryPath || !resolveAndVerifyPath(result.compile.binaryPath, roots)) return false;
+  }
+
+  if (result.validation?.ok) {
+    if (!result.validation.validationPath || !resolveAndVerifyPath(result.validation.validationPath, roots)) return false;
+  }
+
+  if (result.benchmark?.ok) {
+    if (!result.benchmark.samplePath || !resolveAndVerifyPath(result.benchmark.samplePath, roots)) return false;
+  }
+
+  // Verify listed artifact paths
+  for (const artifactPath of (result.artifactPaths || [])) {
+    if (!resolveAndVerifyPath(artifactPath, roots)) return false;
+  }
+
+  return true;
+}
 
 function recordBaselineArtifact(state, result, baseline) {
   if (!baseline?.bucketKey) return;
@@ -97,31 +138,49 @@ export function mergeCycleArtifacts(state, responses, config) {
       summary: envelope.summary,
     });
     proposals.push(...envelope.candidateProposals);
-    results.push(...envelope.results);
 
-    for (const audit of envelope.audits) {
-      if (!audit.proposalId) continue;
-      const current = auditsByProposalId.get(audit.proposalId) || {
-        proposalId: audit.proposalId,
-        openHighConfidenceFindings: 0,
-        openMediumConfidenceFindings: 0,
-        retestRequested: false,
-        notes: [],
-        auditedByWorkerIds: [],
-      };
-      current.openHighConfidenceFindings = Math.max(current.openHighConfidenceFindings, audit.openHighConfidenceFindings);
-      current.openMediumConfidenceFindings = Math.max(current.openMediumConfidenceFindings, audit.openMediumConfidenceFindings);
-      current.retestRequested = current.retestRequested || audit.retestRequested;
-      if (audit.notes) current.notes.push(audit.notes);
-      current.auditedByWorkerIds.push(response.agentId);
-      auditsByProposalId.set(audit.proposalId, current);
+    // Issue 1: Only accept results from builder-capable lanes
+    if (BUILDER_CAPABLE_LANES.has(worker.assignedLane)) {
+      // Issue 0: Verify artifact paths exist before accepting results
+      for (const result of envelope.results) {
+        if (verifyResultArtifacts(result, config)) {
+          results.push(result);
+        }
+      }
+    }
+
+    // Issue 1: Only accept audits from auditor-capable lanes
+    if (AUDITOR_CAPABLE_LANES.has(worker.assignedLane)) {
+      for (const audit of envelope.audits) {
+        if (!audit.proposalId) continue;
+        const current = auditsByProposalId.get(audit.proposalId) || {
+          proposalId: audit.proposalId,
+          openHighConfidenceFindings: 0,
+          openMediumConfidenceFindings: 0,
+          retestRequested: false,
+          notes: [],
+          auditedByWorkerIds: [],
+        };
+        current.openHighConfidenceFindings = Math.max(current.openHighConfidenceFindings, audit.openHighConfidenceFindings);
+        current.openMediumConfidenceFindings = Math.max(current.openMediumConfidenceFindings, audit.openMediumConfidenceFindings);
+        current.retestRequested = current.retestRequested || audit.retestRequested;
+        if (audit.notes) current.notes.push(audit.notes);
+        current.auditedByWorkerIds.push(response.agentId);
+        auditsByProposalId.set(audit.proposalId, current);
+      }
     }
   }
 
   for (const result of results) {
     const promoted = state.activePromotedProposals.find((proposal) => proposal.proposalId === result.proposalId);
     const isBaselineResult = Boolean(result.isBaseline || promoted?.isBaselineCandidate);
-    const directBaseline = result.benchmark.ok && Number.isFinite(result.benchmark.medianNs)
+    // Only accept baselines from results that have verified successful
+    // compile + validation + benchmark evidence.  Without all three, the
+    // result cannot serve as trustworthy same-run baseline data.
+    const hasVerifiedEvidence = Boolean(
+      result.compile?.ok && result.validation?.ok && result.benchmark?.ok,
+    );
+    const directBaseline = hasVerifiedEvidence && Number.isFinite(result.benchmark.medianNs)
       ? {
         bucketKey: result.bucketKey,
         medianNs: result.benchmark.medianNs,
@@ -129,15 +188,15 @@ export function mergeCycleArtifacts(state, responses, config) {
         cvPct: result.benchmark.cvPct,
       }
       : null;
-    for (const baseline of result.baselineBenchmarks) {
-      if (baseline.bucketKey && Number.isFinite(baseline.medianNs)) {
-        if (isBaselineResult) {
+    if (isBaselineResult && hasVerifiedEvidence) {
+      for (const baseline of result.baselineBenchmarks) {
+        if (baseline.bucketKey && Number.isFinite(baseline.medianNs)) {
           recordBaselineArtifact(state, result, baseline);
         }
       }
-    }
-    if (isBaselineResult && directBaseline) {
-      recordBaselineArtifact(state, result, directBaseline);
+      if (directBaseline) {
+        recordBaselineArtifact(state, result, directBaseline);
+      }
     }
     if (isBaselineResult) {
       recordBaselineAttempt(state, result, directBaseline || result.baselineBenchmarks[0] || null);

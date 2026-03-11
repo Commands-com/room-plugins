@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { DEFAULTS } from './constants.js';
@@ -66,4 +67,29 @@ export function isSafeSubpath(rootPath, candidatePath) {
   const root = path.resolve(rootPath);
   const target = path.resolve(candidatePath);
   return target === root || target.startsWith(`${root}${path.sep}`);
+}
+
+/**
+ * Resolve a reported artifact path against allowed roots and verify it exists.
+ * Returns the resolved absolute path if valid, or null if the path is outside
+ * the allowed roots, empty, or does not exist on disk.
+ */
+export function resolveAndVerifyPath(reportedPath, allowedRoots) {
+  if (!reportedPath || typeof reportedPath !== 'string') return null;
+  const trimmed = reportedPath.trim();
+  if (!trimmed) return null;
+
+  for (const root of allowedRoots) {
+    if (!root) continue;
+    const resolved = path.resolve(root, trimmed);
+    if (isSafeSubpath(root, resolved)) {
+      try {
+        const stat = fs.statSync(resolved);
+        if (stat.isFile()) return resolved;
+      } catch {
+        // Does not exist under this root – try next.
+      }
+    }
+  }
+  return null;
 }

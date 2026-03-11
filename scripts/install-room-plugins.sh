@@ -8,7 +8,7 @@ Usage: ./scripts/install-room-plugins.sh [options]
 Options:
   --source <dir>          Source plugin directory (default: ./room-plugins)
   --dest <dir>            Destination plugin directory (default: ~/.commands-agent/room-plugins)
-  --allowlist <file>      Allowlist output file (default: ~/.commands-agent/room-plugins-allowed.json)
+  --allowlist <file>      Allowlist output file (derived from --dest parent by default)
   --plugin <name>         Install only a specific plugin (repeatable)
   --skip-allowlist        Do not write allowlist file
   --skip-npm-install      Skip npm install for plugins that have package.json
@@ -21,7 +21,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SOURCE_DIR="${REPO_ROOT}/room-plugins"
 DEST_DIR="${HOME}/.commands-agent/room-plugins"
-ALLOWLIST_PATH="${HOME}/.commands-agent/room-plugins-allowed.json"
+ALLOWLIST_PATH=""
+ALLOWLIST_EXPLICIT=0
 WRITE_ALLOWLIST=1
 INSTALL_DEPS=1
 REQUESTED_PLUGINS=()
@@ -33,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --dest)
       DEST_DIR="$2"; shift 2 ;;
     --allowlist)
-      ALLOWLIST_PATH="$2"; shift 2 ;;
+      ALLOWLIST_PATH="$2"; ALLOWLIST_EXPLICIT=1; shift 2 ;;
     --plugin)
       REQUESTED_PLUGINS+=("$2"); shift 2 ;;
     --skip-allowlist)
@@ -55,7 +56,15 @@ if [[ ! -d "${SOURCE_DIR}" ]]; then
   exit 1
 fi
 
+# Create destination early so that path resolution below can rely on it.
 mkdir -p "${DEST_DIR}"
+
+# Derive allowlist path from the destination directory when not explicitly set.
+# The runtime expects room-plugins-allowed.json in the plugin directory's parent.
+# We resolve after mkdir so the cd always succeeds, even on fresh installs.
+if [[ "${ALLOWLIST_EXPLICIT}" -eq 0 ]]; then
+  ALLOWLIST_PATH="$(cd "${DEST_DIR}" && cd .. && pwd)/room-plugins-allowed.json"
+fi
 
 echo "Installing room plugins"
 echo "Source: ${SOURCE_DIR}"

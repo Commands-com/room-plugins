@@ -42,7 +42,8 @@ Options:
 const repoRoot = path.resolve(__dirname, '..');
 let sourceDir = path.join(repoRoot, 'room-plugins');
 let destDir = process.env.COMMANDS_AGENT_ROOM_PLUGINS_DIR || path.join(getDefaultBaseDir(), 'room-plugins');
-let allowlistPath = path.join(getDefaultBaseDir(), 'room-plugins-allowed.json');
+let allowlistPath = null; // derived from destDir unless explicitly set
+let allowlistExplicitlySet = false;
 let writeAllowlist = true;
 let installDeps = true;
 const requestedPlugins = [];
@@ -61,6 +62,7 @@ for (let i = 0; i < args.length; i++) {
     case '--allowlist':
       if (i + 1 >= args.length) { console.error('Missing value for --allowlist'); usage(); process.exit(1); }
       allowlistPath = args[++i];
+      allowlistExplicitlySet = true;
       break;
     case '--plugin':
       if (i + 1 >= args.length) { console.error('Missing value for --plugin'); usage(); process.exit(1); }
@@ -82,6 +84,12 @@ for (let i = 0; i < args.length; i++) {
       usage();
       process.exit(1);
   }
+}
+
+// Issue 3: Derive allowlist path from the destination directory when not explicitly set.
+// The runtime expects room-plugins-allowed.json in the plugin directory's parent.
+if (!allowlistExplicitlySet) {
+  allowlistPath = path.join(path.dirname(path.resolve(destDir)), 'room-plugins-allowed.json');
 }
 
 if (!fs.existsSync(sourceDir)) {
