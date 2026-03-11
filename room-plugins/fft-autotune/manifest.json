@@ -1,0 +1,224 @@
+{
+  "id": "fft_autotune",
+  "name": "FFT Autotune",
+  "version": "1.0.0",
+  "orchestratorType": "fft_autotune",
+  "description": "Empirical FFT codegen search with deterministic compile, validation, benchmark, and audit evidence",
+  "supportsQuorum": true,
+  "roles": {
+    "required": ["explorer", "builder", "auditor"],
+    "optional": [],
+    "forbidden": ["implementer", "reviewer", "worker"],
+    "minCount": {
+      "explorer": 1,
+      "builder": 1,
+      "auditor": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 6, "min": 1, "max": 20 },
+    "maxTurns": { "default": 120, "min": 4, "max": 2000 },
+    "maxDurationMs": { "default": 14400000, "min": 60000, "max": 43200000 },
+    "maxFailures": { "default": 6, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 1800000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 600000 },
+    "llmTimeoutMs": { "default": 120000, "min": 10000, "max": 600000 },
+    "turnFloorRole": "explorer",
+    "turnFloorFormula": "2 + N"
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "currentPhase",
+        "label": "Phase",
+        "phases": [
+          "preflight",
+          "baseline",
+          "search_planning",
+          "candidate_codegen",
+          "static_audit",
+          "compile_validate",
+          "benchmark",
+          "frontier_refine",
+          "complete"
+        ],
+        "phaseLabels": {
+          "preflight": "Preflight",
+          "baseline": "Baseline",
+          "search_planning": "Search Planning",
+          "candidate_codegen": "Codegen",
+          "static_audit": "Static Audit",
+          "compile_validate": "Compile + Validate",
+          "benchmark": "Benchmark",
+          "frontier_refine": "Refine",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "counter-group",
+        "key": "candidateSummary",
+        "label": "Candidates",
+        "layout": "row",
+        "counters": [
+          { "key": "proposed", "label": "Proposed", "color": "gray" },
+          { "key": "validated", "label": "Validated", "color": "blue" },
+          { "key": "benchmarked", "label": "Benchmarked", "color": "green" },
+          { "key": "frontier", "label": "Frontier", "color": "orange" },
+          { "key": "blocked", "label": "Blocked", "color": "red" }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "cycleProgress",
+        "label": "Cycle Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "progress",
+        "key": "bestImprovementPct",
+        "label": "Best Improvement",
+        "format": "{value}%"
+      },
+      {
+        "type": "table",
+        "key": "frontier",
+        "label": "Frontier",
+        "columns": [
+          { "key": "bucketKey", "label": "Bucket", "width": 110 },
+          { "key": "family", "label": "Family", "width": 150 },
+          { "key": "medianNs", "label": "Median (ns)", "width": 110 },
+          { "key": "speedupPct", "label": "Speedup %", "width": 90 },
+          { "key": "status", "label": "Status", "width": 90 },
+          { "key": "owner", "label": "Builder", "width": 120 }
+        ],
+        "sortable": true,
+        "filterable": ["bucketKey", "status", "owner"]
+      }
+    ]
+  },
+  "display": {
+    "typeLabel": "FFT Autotune",
+    "typeTag": "FFT",
+    "cycleNoun": "Cycle",
+    "reportTitle": "FFT Autotune Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Workers are inventorying the workspace",
+      "fanOut": "Workers are compiling, validating, and benchmarking candidates",
+      "singleTurn": "Worker turn in progress",
+      "synthesis": "Ranking candidate frontier",
+      "planning": "Selecting next FFT candidate set"
+    },
+    "defaultRoster": [
+      { "role": "explorer", "displayName": "Explorer" },
+      { "role": "builder", "displayName": "Builder" },
+      { "role": "auditor", "displayName": "Auditor" }
+    ],
+    "defaultAddRole": "explorer"
+  },
+  "report": {
+    "summaryMetrics": ["bestImprovementPct", "degradedDiversity", "candidateSummary"],
+    "table": {
+      "metricKey": "candidates",
+      "columns": [
+        { "key": "bucketKey", "label": "Bucket", "width": 110 },
+        { "key": "family", "label": "Family", "width": 150 },
+        { "key": "medianNs", "label": "Median (ns)", "width": 110 },
+        { "key": "speedupPct", "label": "Speedup %", "width": 90 },
+        { "key": "status", "label": "Status", "width": 90 },
+        { "key": "issues", "label": "Issues", "width": 70 },
+        { "key": "baseline", "label": "Baseline", "width": 80 },
+        { "key": "owner", "label": "Builder", "width": 120 },
+        { "key": "attempts", "label": "Attempts", "width": 80 },
+        { "key": "repairMode", "label": "Repair", "width": 80 },
+        { "key": "blockedReason", "label": "Blocked Reason", "width": 320 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "winnerSources", "label": "Winner Sources", "language": "c" }
+    ]
+  },
+  "configSchema": {
+    "plannedCandidatesPerCycle": { "type": "integer", "min": 1, "max": 24, "default": 9 },
+    "promoteTopK": { "type": "integer", "min": 1, "max": 8, "default": 3 },
+    "validationSamples": { "type": "integer", "min": 1, "max": 512, "default": 64 },
+    "benchmarkWarmups": { "type": "integer", "min": 1, "max": 50, "default": 5 },
+    "benchmarkTrials": { "type": "integer", "min": 5, "max": 200, "default": 30 },
+    "maxRetestCandidates": { "type": "integer", "min": 1, "max": 5, "default": 2 },
+    "plateauCycles": { "type": "integer", "min": 1, "max": 5, "default": 2 },
+    "targetImprovementPct": { "type": "number", "min": 0, "max": 200, "default": 5 },
+    "maxAuditFindingsPerCandidate": { "type": "integer", "min": 0, "max": 20, "default": 5 },
+    "maxCandidatesPerFamily": { "type": "integer", "min": 1, "max": 8, "default": 3 }
+  },
+  "roomConfigSchema": {
+    "workspacePath": {
+      "type": "directory",
+      "label": "Workspace Path",
+      "required": true,
+      "placeholder": "Absolute repository path to tune against"
+    },
+    "targetSizes": {
+      "type": "number_array",
+      "label": "Target Sizes",
+      "required": true,
+      "minItems": 1,
+      "maxItems": 32,
+      "default": [64, 256, 1024]
+    },
+    "targetArch": {
+      "type": "enum",
+      "label": "Target Architecture",
+      "default": "apple_silicon_neon",
+      "options": ["apple_silicon_neon"]
+    },
+    "candidateLanguage": {
+      "type": "enum",
+      "label": "Candidate Language",
+      "default": "c",
+      "options": ["c"]
+    },
+    "sourceContextPaths": {
+      "type": "string_array",
+      "label": "Source Context Paths",
+      "maxItems": 10,
+      "default": []
+    },
+    "compilerCommand": {
+      "type": "string",
+      "label": "Compiler Command",
+      "default": "clang",
+      "placeholder": "clang"
+    },
+    "compilerFlags": {
+      "type": "string_array",
+      "label": "Compiler Flags",
+      "maxItems": 32,
+      "default": ["-O3", "-ffast-math", "-march=native"]
+    },
+    "benchmarkCommand": {
+      "type": "string",
+      "label": "Benchmark Command",
+      "default": "",
+      "placeholder": "Optional external benchmark harness command"
+    },
+    "outputDir": {
+      "type": "directory",
+      "label": "Output Directory",
+      "default": ".commands/fft-autotune",
+      "placeholder": ".commands/fft-autotune"
+    }
+  },
+  "setup": {
+    "compatibilityGate": true,
+    "compatibilityTitle": "FFT Preflight",
+    "compatibilityDescription": "Verify the workspace, safe output path, FFT size set, and compiler before creating the room.",
+    "checkLabel": "Run Preflight",
+    "fixLabel": "Create Output Dir",
+    "allowMakeCompatible": true
+  }
+}

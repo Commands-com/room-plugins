@@ -62,13 +62,22 @@ function createPlugin() {
   };
 }
 
-export default { manifest, createPlugin };
-export { manifest, createPlugin };
+async function checkCompatibility(payload, ctx) {
+  return { ok: true, report: { compatible: true } };
+}
+
+async function makeCompatible(payload, ctx) {
+  return { ok: true, applied: false, actions: [], report: { compatible: true } };
+}
+
+export default { manifest, createPlugin, checkCompatibility, makeCompatible };
+export { manifest, createPlugin, checkCompatibility, makeCompatible };
 ```
 
 Rules:
 
 - `createPlugin` must be a function.
+- `checkCompatibility` and `makeCompatible` are optional descriptor-level hooks.
 - `manifest` must be JSON-serializable.
 - Exported `manifest` must match `manifest.json` exactly.
 - Implement `onRoomStart`, `onTurnResult`, `onFanOutComplete`, and `onEvent` as real functions; missing hooks can trigger hook failures and pause the room.
@@ -92,6 +101,8 @@ Allowed top-level keys:
 - `display` (optional object)
 - `report` (optional object)
 - `configSchema` (optional object)
+- `roomConfigSchema` (optional object)
+- `setup` (optional object)
 
 Unknown fields are rejected.
 
@@ -182,8 +193,33 @@ Allowed keys:
 - `table` object with:
   - `metricKey` (non-empty string)
   - `columns` (array of `{ key, label, width? }`)
+- `codeBlocks` (array of `{ metricKey, label, language? }`)
 
 `width` must be a finite number when present.
+
+Each `codeBlocks` entry points at a metric object emitted by the plugin with
+fields such as:
+
+- `title`
+- `subtitle`
+- `path`
+- `language`
+- `content`
+- `footer`
+
+The metric may also emit a collection:
+
+```js
+{
+  title: 'Winner Sources',
+  blocks: [
+    { title, subtitle, path, language, content, footer },
+    { title, subtitle, path, language, content, footer },
+  ]
+}
+```
+
+The host renders those as report artifact/code panels when present.
 
 ### 4.7 `configSchema`
 
@@ -205,6 +241,42 @@ Rules:
 
 At runtime, user-provided `orchestratorConfig` is clamped to this schema.
 
+### 4.8 `roomConfigSchema`
+
+`roomConfigSchema` supports non-numeric room setup fields that are rendered in the create UI and passed to plugins as `ctx.roomConfig`.
+
+Per field allowed keys:
+
+- `type` (`"string"`, `"directory"`, `"enum"`, `"boolean"`, `"string_array"`, or `"number_array"`)
+- `label` (required non-empty string)
+- `description` (optional string)
+- `required` (optional boolean)
+- `default` (optional type-matching default value)
+- `placeholder` (optional string)
+- `options` (required non-empty string array for `"enum"`)
+- `minItems` (optional integer >= 0 for array fields)
+- `maxItems` (optional integer >= 0 for array fields)
+
+Rules:
+
+- `label` is required for every field.
+- `options` is valid only for `enum`.
+- `minItems` / `maxItems` are valid only for `string_array` and `number_array`.
+- user-provided `roomConfig` is validated against this schema before room creation.
+
+### 4.9 `setup`
+
+`setup` controls compatibility/preflight gating in the room create flow.
+
+Allowed keys:
+
+- `compatibilityGate` (boolean)
+- `compatibilityTitle` (non-empty string)
+- `compatibilityDescription` (non-empty string)
+- `checkLabel` (non-empty string)
+- `fixLabel` (non-empty string)
+- `allowMakeCompatible` (boolean)
+
 ## 5. Decision Contract
 
 Hooks that return decisions must return one of:
@@ -213,6 +285,8 @@ Hooks that return decisions must return one of:
 { type: 'speak', agentId: string, message: string }
 
 { type: 'fan_out', targets: [ { agentId: string, message: string } ] }
+
+{ type: 'fan_out', targets: [ { role: string, message: string } ] }
 
 { type: 'pause', reason?: string }
 
@@ -224,8 +298,10 @@ Validation rules:
 - `speak.agentId` must exist in room participants.
 - `speak.message` must be non-empty.
 - `fan_out.targets` must be non-empty.
-- every `fan_out` target must have a valid participant `agentId`.
-- duplicate `agentId` values inside one `fan_out` are rejected.
+- every `fan_out` target must specify exactly one of `agentId` or `role`.
+- `fan_out` `agentId` values must exist in room participants.
+- `fan_out` `role` values must match at least one participant role.
+- duplicate concrete participants inside one `fan_out` are rejected, including overlaps between explicit `agentId` targets and role-expanded targets.
 - every `fan_out` target `message` must be non-empty.
 - `stop.reason` must be non-empty.
 
@@ -304,6 +380,20 @@ Runtime currently emits:
 { type: 'participant_disconnected', agentId: string }
 ```
 
+- fan-out partial completion:
+
+```js
+{
+  type: 'fan_out_partial',
+  agentId: string,
+  displayName?: string,
+  detail: {
+    response: string,
+    responseLength: number,
+  }
+}
+```
+
 - user edit state request:
 
 ```js
@@ -312,12 +402,13 @@ Runtime currently emits:
 
 For disconnect events, return a recovery decision when possible.
 
-> **Important:** During an active fan-out, disconnect events are dispatched for
-> state mutation only — return values from `onEvent(participant_disconnected)` are
-> **not** executed as decisions in that context. Use the hook to update plugin state
-> (e.g. mark the participant as lost) and handle recovery when the fan-out
-> completes via `onFanOutComplete`. Outside of fan-out, returned decisions are
-> applied normally.
+> **Important:** During an active fan-out, `fan_out_partial` and
+> `participant_disconnected` events are dispatched for state mutation only —
+> return values from `onEvent(...)` are **not** executed as decisions in that
+> context. Use the hook to update plugin state (for example, progress metrics,
+> phase changes, or marking a participant as lost) and handle recovery when the
+> fan-out completes via `onFanOutComplete`. Outside of fan-out, returned
+> decisions are applied normally.
 
 For `user_edit_state`, mutate plugin state directly via `ctx.setState(...)`; return values are not used for edit application.
 
@@ -343,11 +434,15 @@ Hook `ctx` includes immutable snapshots plus helper methods:
 {
   roomId,
   objective,
-  participants,      // [{ agentId, displayName, role, endpoint }]
+  participants,      // [{ agentId, displayName, role, endpoint, profile? }]
+  getParticipant(agentId),
+  getParticipantsByRole(role),
+  getRoleCounts(),
+  getRoles(),
   limits,
   llmConfig,
   orchestratorConfig,
-  roomConfig,        // targetPath, harnessCommand, targetRuntime, testPersonas
+  roomConfig,        // normalized manifest-defined roomConfig fields
   syncState,
   mode,
   cycle,
@@ -361,6 +456,43 @@ Hook `ctx` includes immutable snapshots plus helper methods:
   getFinalReport(),
 }
 ```
+
+For local participants, `profile` is a read-only summary snapshot:
+
+```js
+{
+  id,
+  name,
+  provider,
+  model,
+}
+```
+
+For remote participants, `profile` is `null`.
+
+Descriptor-level compatibility hooks, when present, receive:
+
+```js
+async function checkCompatibility(payload, ctx) {}
+async function makeCompatible(payload, ctx) {}
+```
+
+`payload` includes:
+
+- `orchestratorType`
+- `roomConfig` (normalized against `manifest.roomConfigSchema`)
+- `localAgentProfileIds` (when available)
+
+`ctx` includes:
+
+- `manifest`
+- `fs`
+- `path`
+- `readProfileById`
+- `permissionProfileStorage`
+- `saveProfile`
+- `requestLocalPrompt`
+- `isProfileRunning`
 
 ### 7.1 `invokeLLM(prompt, options?)`
 

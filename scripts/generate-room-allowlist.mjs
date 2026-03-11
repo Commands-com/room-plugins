@@ -4,11 +4,14 @@ import path from 'node:path';
 import { computeRoomPluginSha256 } from './compute-room-plugin-sha256.mjs';
 
 async function main() {
-  const pluginRoot = process.argv[2];
-  const outputPath = process.argv[3];
+  const args = process.argv.slice(2);
+  const managedOnly = args.includes('--managed-only');
+  const positionalArgs = args.filter((arg) => arg !== '--managed-only');
+  const pluginRoot = positionalArgs[0];
+  const outputPath = positionalArgs[1];
 
   if (!pluginRoot || !outputPath) {
-    console.error('Usage: node generate-room-allowlist.mjs <pluginsDir> <outputFile>');
+    console.error('Usage: node generate-room-allowlist.mjs [--managed-only] <pluginsDir> <outputFile>');
     process.exit(1);
   }
 
@@ -16,10 +19,24 @@ async function main() {
   const out = path.resolve(outputPath);
 
   const entries = await fs.readdir(root, { withFileTypes: true });
-  const pluginDirs = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b));
+  const pluginDirs = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const pluginPath = path.join(root, entry.name);
+    if (managedOnly) {
+      const markerPath = path.join(pluginPath, '.installed-by-commands-room-plugins');
+      try {
+        const markerStat = await fs.stat(markerPath);
+        if (!markerStat.isFile()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+    pluginDirs.push(entry.name);
+  }
+  pluginDirs.sort((a, b) => a.localeCompare(b));
 
   const allowed = [];
   for (const name of pluginDirs) {

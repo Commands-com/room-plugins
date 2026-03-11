@@ -3,6 +3,10 @@
     {
       "name": "template-room",
       "sha256": "722aec71544a1ee1a47cef72f194f6619ae5e9b8162ac079c30e8b516df1554b"
+    },
+    {
+      "name": "fft-autotune",
+      "sha256": "d2117a55528f06c4393e304fbbd855d53234224f9ec96f14f43a92b7ca8a07fe"
     }
   ]
 }

@@ -9,6 +9,7 @@ Options:
   --source <dir>          Source plugin directory (default: ./room-plugins)
   --dest <dir>            Destination plugin directory (default: ~/.commands-agent/room-plugins)
   --allowlist <file>      Allowlist output file (default: ~/.commands-agent/room-plugins-allowed.json)
+  --plugin <name>         Install only a specific plugin (repeatable)
   --skip-allowlist        Do not write allowlist file
   --skip-npm-install      Skip npm install for plugins that have package.json
   -h, --help              Show this help
@@ -23,6 +24,7 @@ DEST_DIR="${HOME}/.commands-agent/room-plugins"
 ALLOWLIST_PATH="${HOME}/.commands-agent/room-plugins-allowed.json"
 WRITE_ALLOWLIST=1
 INSTALL_DEPS=1
+REQUESTED_PLUGINS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +34,8 @@ while [[ $# -gt 0 ]]; do
       DEST_DIR="$2"; shift 2 ;;
     --allowlist)
       ALLOWLIST_PATH="$2"; shift 2 ;;
+    --plugin)
+      REQUESTED_PLUGINS+=("$2"); shift 2 ;;
     --skip-allowlist)
       WRITE_ALLOWLIST=0; shift ;;
     --skip-npm-install)
@@ -59,37 +63,70 @@ echo "Dest:   ${DEST_DIR}"
 
 shopt -s nullglob
 
-# Collect source plugin names for stale-directory pruning (Bash 3-compatible).
-# Names are bracketed with colons on both sides so case-matching is exact
-# (e.g. ":template-room:" will not match a dest named "template").
-source_plugin_names=":"
-for plugin_path in "${SOURCE_DIR}"/*; do
-  [[ -d "${plugin_path}" ]] || continue
-  source_plugin_names="${source_plugin_names}$(basename "${plugin_path}"):"
-done
+PLUGIN_PATHS=()
+SELECTIVE_INSTALL=0
 
-# Remove destination plugin directories that no longer exist in source.
-# Safety: only delete directories this installer previously managed.
-for dest_path in "${DEST_DIR}"/*; do
-  [[ -d "${dest_path}" ]] || continue
-  dest_name="$(basename "${dest_path}")"
-  case "${source_plugin_names}" in
-    *":${dest_name}:"*)
-      ;; # still exists in source, keep it
-    *)
-      if [[ -f "${dest_path}/.installed-by-commands-room-plugins" ]]; then
-        echo "[${dest_name}] removing stale plugin directory"
-        rm -rf "${dest_path}"
-      else
-        echo "[${dest_name}] skipping removal (not managed by this installer)"
-      fi
-      ;;
-  esac
-done
+if [[ "${#REQUESTED_PLUGINS[@]}" -gt 0 ]]; then
+  SELECTIVE_INSTALL=1
+  seen_plugin_names=":"
+  for plugin_name in "${REQUESTED_PLUGINS[@]}"; do
+    plugin_path="${SOURCE_DIR}/${plugin_name}"
+    if [[ ! -d "${plugin_path}" ]]; then
+      echo "Requested plugin not found: ${plugin_name}" >&2
+      exit 1
+    fi
+
+    case "${seen_plugin_names}" in
+      *":${plugin_name}:"*)
+        continue
+        ;;
+    esac
+
+    seen_plugin_names="${seen_plugin_names}${plugin_name}:"
+    PLUGIN_PATHS+=("${plugin_path}")
+  done
+else
+  for plugin_path in "${SOURCE_DIR}"/*; do
+    [[ -d "${plugin_path}" ]] || continue
+    PLUGIN_PATHS+=("${plugin_path}")
+  done
+fi
+
+if [[ "${SELECTIVE_INSTALL}" -eq 1 ]]; then
+  echo "Mode:   selective"
+fi
+
+if [[ "${SELECTIVE_INSTALL}" -eq 0 ]]; then
+  # Collect source plugin names for stale-directory pruning (Bash 3-compatible).
+  # Names are bracketed with colons on both sides so case-matching is exact
+  # (e.g. ":template-room:" will not match a dest named "template").
+  source_plugin_names=":"
+  for plugin_path in "${PLUGIN_PATHS[@]}"; do
+    source_plugin_names="${source_plugin_names}$(basename "${plugin_path}"):"
+  done
+
+  # Remove destination plugin directories that no longer exist in source.
+  # Safety: only delete directories this installer previously managed.
+  for dest_path in "${DEST_DIR}"/*; do
+    [[ -d "${dest_path}" ]] || continue
+    dest_name="$(basename "${dest_path}")"
+    case "${source_plugin_names}" in
+      *":${dest_name}:"*)
+        ;; # still exists in source, keep it
+      *)
+        if [[ -f "${dest_path}/.installed-by-commands-room-plugins" ]]; then
+          echo "[${dest_name}] removing stale plugin directory"
+          rm -rf "${dest_path}"
+        else
+          echo "[${dest_name}] skipping removal (not managed by this installer)"
+        fi
+        ;;
+    esac
+  done
+fi
 
 # Sync each source plugin to destination
-for plugin_path in "${SOURCE_DIR}"/*; do
-  [[ -d "${plugin_path}" ]] || continue
+for plugin_path in "${PLUGIN_PATHS[@]}"; do
   plugin_name="$(basename "${plugin_path}")"
   dest_plugin_path="${DEST_DIR}/${plugin_name}"
 
@@ -108,7 +145,7 @@ for plugin_path in "${SOURCE_DIR}"/*; do
 done
 
 if [[ "${WRITE_ALLOWLIST}" -eq 1 ]]; then
-  node "${REPO_ROOT}/scripts/generate-room-allowlist.mjs" "${DEST_DIR}" "${ALLOWLIST_PATH}"
+  node "${REPO_ROOT}/scripts/generate-room-allowlist.mjs" --managed-only "${DEST_DIR}" "${ALLOWLIST_PATH}"
 fi
 
 echo "Done. Restart Commands Desktop to load plugins."

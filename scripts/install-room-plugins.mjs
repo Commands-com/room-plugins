@@ -32,6 +32,7 @@ Options:
   --dest <dir>            Destination plugin directory
                           (default: ${defaultDest})
   --allowlist <file>      Allowlist output file (derived from --dest by default)
+  --plugin <name>         Install only a specific plugin (repeatable)
   --skip-allowlist        Do not write allowlist file
   --skip-npm-install      Skip npm install for plugins with package.json
   -h, --help              Show this help`);
@@ -44,6 +45,7 @@ let destDir = process.env.COMMANDS_AGENT_ROOM_PLUGINS_DIR || path.join(getDefaul
 let allowlistPath = path.join(getDefaultBaseDir(), 'room-plugins-allowed.json');
 let writeAllowlist = true;
 let installDeps = true;
+const requestedPlugins = [];
 
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
@@ -59,6 +61,10 @@ for (let i = 0; i < args.length; i++) {
     case '--allowlist':
       if (i + 1 >= args.length) { console.error('Missing value for --allowlist'); usage(); process.exit(1); }
       allowlistPath = args[++i];
+      break;
+    case '--plugin':
+      if (i + 1 >= args.length) { console.error('Missing value for --plugin'); usage(); process.exit(1); }
+      requestedPlugins.push(args[++i]);
       break;
     case '--skip-allowlist':
       writeAllowlist = false;
@@ -135,37 +141,50 @@ fs.mkdirSync(destDir, { recursive: true });
 console.log('Installing room plugins');
 console.log(`Source: ${sourceDir}`);
 console.log(`Dest:   ${destDir}`);
-
-const sourcePluginNames = new Set();
-
-// Prune stale plugin directories first (matches bash script behavior)
-const existingEntries = fs.existsSync(destDir) ? fs.readdirSync(destDir, { withFileTypes: true }) : [];
-
-// Collect source plugin names
-const srcEntries = fs.readdirSync(sourceDir, { withFileTypes: true });
-for (const entry of srcEntries) {
-  if (entry.isDirectory()) sourcePluginNames.add(entry.name);
+if (requestedPlugins.length > 0) {
+  console.log('Mode:   selective');
 }
 
-// Remove stale destinations
-for (const entry of existingEntries) {
-  if (!entry.isDirectory()) continue;
-  if (sourcePluginNames.has(entry.name)) continue;
+const srcEntries = fs.readdirSync(sourceDir, { withFileTypes: true });
+let selectedEntries = srcEntries.filter((entry) => entry.isDirectory());
 
-  const destPluginPath = path.join(destDir, entry.name);
-  const markerPath = path.join(destPluginPath, '.installed-by-commands-room-plugins');
-  if (fs.existsSync(markerPath)) {
-    console.log(`[${entry.name}] removing stale plugin directory`);
-    fs.rmSync(destPluginPath, { recursive: true, force: true });
-  } else {
-    console.log(`[${entry.name}] skipping removal (not managed by this installer)`);
+if (requestedPlugins.length > 0) {
+  const requestedNames = Array.from(new Set(requestedPlugins));
+  const srcEntryMap = new Map(selectedEntries.map((entry) => [entry.name, entry]));
+  selectedEntries = [];
+
+  for (const pluginName of requestedNames) {
+    const entry = srcEntryMap.get(pluginName);
+    if (!entry) {
+      console.error(`Requested plugin not found: ${pluginName}`);
+      process.exit(1);
+    }
+    selectedEntries.push(entry);
+  }
+}
+
+if (requestedPlugins.length === 0) {
+  const sourcePluginNames = new Set(selectedEntries.map((entry) => entry.name));
+  const existingEntries = fs.existsSync(destDir) ? fs.readdirSync(destDir, { withFileTypes: true }) : [];
+
+  // Remove stale destinations
+  for (const entry of existingEntries) {
+    if (!entry.isDirectory()) continue;
+    if (sourcePluginNames.has(entry.name)) continue;
+
+    const destPluginPath = path.join(destDir, entry.name);
+    const markerPath = path.join(destPluginPath, '.installed-by-commands-room-plugins');
+    if (fs.existsSync(markerPath)) {
+      console.log(`[${entry.name}] removing stale plugin directory`);
+      fs.rmSync(destPluginPath, { recursive: true, force: true });
+    } else {
+      console.log(`[${entry.name}] skipping removal (not managed by this installer)`);
+    }
   }
 }
 
 // Sync each source plugin to destination
-for (const entry of srcEntries) {
-  if (!entry.isDirectory()) continue;
-
+for (const entry of selectedEntries) {
   const pluginName = entry.name;
   const srcPluginPath = path.join(sourceDir, pluginName);
   const destPluginPath = path.join(destDir, pluginName);
@@ -193,7 +212,7 @@ for (const entry of srcEntries) {
 if (writeAllowlist) {
   const allowlistScript = path.join(repoRoot, 'scripts', 'generate-room-allowlist.mjs');
   console.log(`Generating allowlist: ${allowlistPath}`);
-  execFileSync(process.execPath, [allowlistScript, destDir, allowlistPath], {
+  execFileSync(process.execPath, [allowlistScript, '--managed-only', destDir, allowlistPath], {
     stdio: 'inherit',
   });
 }

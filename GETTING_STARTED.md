@@ -54,6 +54,11 @@ Keep `manifest.json` and the exported `manifest` in `index.js` exactly aligned.
 ```
 
 Then restart Commands Desktop.
+For faster iteration on one room, install just that plugin:
+
+```bash
+./scripts/install-room-plugins.sh --plugin my-room
+```
 
 ## 5. Validate In-App Behavior
 
@@ -73,6 +78,7 @@ When you change plugin code, regenerate allowlist hashes before publishing:
 
 ```bash
 node ./scripts/generate-room-allowlist.mjs \
+  --managed-only \
   ~/.commands-agent/room-plugins \
   ~/.commands-agent/room-plugins-allowed.json
 ```

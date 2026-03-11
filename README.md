@@ -57,6 +57,12 @@ node scripts/install-room-plugins.mjs
 ```
 
 Both scripts copy plugins, install npm dependencies, and generate the SHA-256 allowlist.
+Use `--plugin <name>` to sync a single plugin without pruning other managed plugin folders already present in the destination. Installer-generated allowlists now only include installer-managed plugin directories in the destination.
+
+```bash
+./scripts/install-room-plugins.sh --plugin fft-autotune
+node scripts/install-room-plugins.mjs --plugin fft-autotune
+```
 
 | Platform | Default install locations |
 |---|---|
@@ -107,6 +113,7 @@ In Desktop: **Settings > Developer > Dev Mode + Trust All Plugins**.
 
 ```
 room-plugins/template-room                  Reference implementation (copy to create new)
+room-plugins/fft-autotune                   Advanced empirical search room example with explicit explorer/builder/auditor roles
 scripts/install-room-plugins.sh             Bash installer (macOS/Linux)
 scripts/install-room-plugins.mjs            Node.js installer (cross-platform)
 scripts/generate-room-allowlist.mjs         Generate allowlist with SHA-256 pins
