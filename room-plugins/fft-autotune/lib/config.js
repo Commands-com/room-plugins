@@ -188,10 +188,10 @@ export function buildCompatibilityReport(config, localAgentProfileIds = []) {
         details: config.outputDir,
       });
     } else {
-      missing.push({
+      hardFailures.push({
         id: 'output_dir_missing',
         label: 'Output Directory',
-        details: `${config.outputDir} does not exist yet`,
+        details: `${config.outputDir} does not exist yet; use Make Compatible to scaffold it`,
       });
     }
   }
@@ -265,6 +265,47 @@ export async function checkCompatibility(payload = {}) {
   return { ok: true, report };
 }
 
+export function ensureScaffoldedWorkspace(roomConfig) {
+  const actions = [];
+  const errors = [];
+
+  if (!roomConfig?.workspacePath || !fs.existsSync(roomConfig.workspacePath)) {
+    return { applied: false, actions, errors };
+  }
+
+  if (!isSafeSubpath(roomConfig.workspacePath, roomConfig.outputDir)) {
+    return {
+      applied: false,
+      actions,
+      errors: ['outputDir must resolve to a writable workspace-safe directory'],
+    };
+  }
+
+  try {
+    if (!fs.existsSync(roomConfig.outputDir)) {
+      fs.mkdirSync(roomConfig.outputDir, { recursive: true });
+      actions.push(`Created output directory ${roomConfig.outputDir}`);
+    }
+  } catch (err) {
+    errors.push(err?.message || String(err));
+  }
+
+  try {
+    if (fs.existsSync(roomConfig.outputDir)) {
+      const scaffoldActions = scaffoldWorkspace(roomConfig.outputDir);
+      actions.push(...scaffoldActions);
+    }
+  } catch (err) {
+    errors.push(err?.message || String(err));
+  }
+
+  return {
+    applied: actions.length > 0,
+    actions,
+    errors,
+  };
+}
+
 export async function makeCompatible(payload = {}) {
   const roomConfig = normalizeRoomConfig(payload.roomConfig || payload);
   const actions = [];
@@ -281,23 +322,9 @@ export async function makeCompatible(payload = {}) {
     };
   }
 
-  try {
-    if (!fs.existsSync(roomConfig.outputDir) && isSafeSubpath(roomConfig.workspacePath, roomConfig.outputDir)) {
-      fs.mkdirSync(roomConfig.outputDir, { recursive: true });
-      actions.push(`Created output directory ${roomConfig.outputDir}`);
-    }
-  } catch (err) {
-    errors.push(err?.message || String(err));
-  }
-
-  try {
-    if (fs.existsSync(roomConfig.outputDir) && isSafeSubpath(roomConfig.workspacePath, roomConfig.outputDir)) {
-      const scaffoldActions = scaffoldWorkspace(roomConfig.outputDir);
-      actions.push(...scaffoldActions);
-    }
-  } catch (err) {
-    errors.push(err?.message || String(err));
-  }
+  const ensured = ensureScaffoldedWorkspace(roomConfig);
+  actions.push(...ensured.actions);
+  errors.push(...ensured.errors);
 
   const report = buildCompatibilityReport(roomConfig, payload.localAgentProfileIds || []);
   return {

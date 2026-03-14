@@ -1,7 +1,14 @@
-import { IMPLEMENTATION_FIDELITY_PATTERNS, SIMD_GAP_PATTERNS } from './constants.js';
+import {
+  IMPLEMENTATION_FIDELITY_PATTERNS,
+  METHODOLOGY_GAP_PATTERNS,
+  NONBLOCKING_FIDELITY_PATTERNS,
+  SIMD_GAP_PATTERNS,
+} from './constants.js';
 import { getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
 import { parseWorkerEnvelope } from './envelope.js';
 import { resolveAndVerifyPath, safeTrim } from './utils.js';
+
+const REFERENCE_ONLY_FAMILIES = new Set(['ne10_neon_reference']);
 
 /**
  * Determine the set of lanes that are allowed to submit build results.
@@ -103,8 +110,10 @@ function applyAuditSeverityPolicy(candidate, promotedProposal) {
   const simdGapOnly = promotedSimdStrategy === 'neon'
     && candidateSimdStrategy === 'scalar'
     && SIMD_GAP_PATTERNS.some((pattern) => pattern.test(combinedNotes));
+  const nonBlockingFidelityOnly = NONBLOCKING_FIDELITY_PATTERNS.some((pattern) => pattern.test(combinedNotes));
+  const methodologyGapOnly = METHODOLOGY_GAP_PATTERNS.some((pattern) => pattern.test(combinedNotes));
 
-  if (!simdGapOnly) {
+  if (!simdGapOnly && !nonBlockingFidelityOnly && !methodologyGapOnly) {
     return;
   }
 
@@ -114,10 +123,65 @@ function applyAuditSeverityPolicy(candidate, promotedProposal) {
     1,
   );
   candidate.audit.openHighConfidenceFindings = 0;
-  candidate.notes = [
+  if (simdGapOnly) {
+    candidate.notes = [
+      candidate.notes,
+      'SIMD gap treated as non-blocking optimization debt because the candidate is still a correct benchmarked FFT.',
+    ].filter(Boolean).join(' | ');
+  }
+  if (nonBlockingFidelityOnly) {
+    candidate.notes = [
+      candidate.notes,
+      'Metadata/permutation fidelity mismatch treated as non-blocking because the built artifact validated and benchmarked cleanly; builder should report actual built metadata next cycle.',
+    ].filter(Boolean).join(' | ');
+  }
+  if (methodologyGapOnly) {
+    candidate.notes = [
+      candidate.notes,
+      'Benchmark methodology or small-N stability concern treated as non-blocking for frontier eligibility; keep as follow-up retest guidance.',
+    ].filter(Boolean).join(' | ');
+  }
+}
+
+function appendUniqueNote(existingNotes, note) {
+  const trimmed = safeTrim(note, 1200);
+  if (!trimmed) return existingNotes || '';
+  if (!existingNotes) return trimmed;
+  if (existingNotes.includes(trimmed)) return existingNotes;
+  return `${existingNotes} | ${trimmed}`;
+}
+
+function syncFidelityMismatch(candidate) {
+  const fidelityMismatch = IMPLEMENTATION_FIDELITY_PATTERNS.some((pattern) => pattern.test(candidate.notes || ''));
+  if (!fidelityMismatch) return;
+  candidate.audit.openHighConfidenceFindings = Math.max(candidate.audit.openHighConfidenceFindings || 0, 1);
+  candidate.status = 'rejected';
+  candidate.notes = appendUniqueNote(
     candidate.notes,
-    'SIMD gap treated as non-blocking optimization debt because the candidate is still a correct benchmarked FFT.',
-  ].filter(Boolean).join(' | ');
+    'Implementation fidelity mismatch: result does not match claimed FFT family',
+  );
+}
+
+function applyAuditRecordToCandidate(candidate, audit, promotedProposal) {
+  if (!candidate || !audit) return;
+  candidate.auditedByWorkerIds = Array.from(new Set([
+    ...(candidate.auditedByWorkerIds || []),
+    ...(audit.auditedByWorkerIds || []),
+  ]));
+  candidate.audit.openHighConfidenceFindings = Math.max(
+    candidate.audit.openHighConfidenceFindings || 0,
+    audit.openHighConfidenceFindings || 0,
+  );
+  candidate.audit.openMediumConfidenceFindings = Math.max(
+    candidate.audit.openMediumConfidenceFindings || 0,
+    audit.openMediumConfidenceFindings || 0,
+  );
+  const joinedNotes = Array.isArray(audit.notes) ? audit.notes.join(' | ') : safeTrim(audit.notes, 1000);
+  candidate.notes = appendUniqueNote(candidate.notes, joinedNotes);
+  syncFidelityMismatch(candidate);
+  applyAuditSeverityPolicy(candidate, promotedProposal || {
+    simdStrategy: candidate.requestedSimdStrategy || candidate.simdStrategy,
+  });
 }
 
 export function mergeCycleArtifacts(state, responses, config) {
@@ -197,6 +261,16 @@ export function mergeCycleArtifacts(state, responses, config) {
       if (directBaseline) {
         recordBaselineArtifact(state, result, directBaseline);
       }
+    } else if (hasVerifiedEvidence) {
+      for (const baseline of result.baselineBenchmarks) {
+        if (
+          baseline.bucketKey
+          && Number.isFinite(baseline.medianNs)
+          && !state.baselines[baseline.bucketKey]
+        ) {
+          recordBaselineArtifact(state, result, baseline);
+        }
+      }
     }
     if (isBaselineResult) {
       recordBaselineAttempt(state, result, directBaseline || result.baselineBenchmarks[0] || null);
@@ -227,6 +301,7 @@ export function mergeCycleArtifacts(state, responses, config) {
 
     const candidate = {
       candidateId: `${result.proposalId || `candidate-${state.candidates.length + 1}`}`,
+      proposalId: result.proposalId || '',
       cycle: state.cycleIndex,
       bucketKey: result.bucketKey,
       family: result.family,
@@ -240,6 +315,7 @@ export function mergeCycleArtifacts(state, responses, config) {
       permutationStrategy: result.permutationStrategy,
       twiddleStrategy: result.twiddleStrategy,
       simdStrategy: result.simdStrategy,
+      requestedSimdStrategy: promoted?.simdStrategy || result.simdStrategy,
       compile: result.compile,
       validation: result.validation,
       benchmark,
@@ -263,16 +339,18 @@ export function mergeCycleArtifacts(state, responses, config) {
         `Reported comparison baseline ${reportedBucketBaseline.medianNs.toFixed(3)} ns differs from canonical same-run baseline ${baseline.medianNs.toFixed(3)} ns; final speedup uses canonical baseline.`,
       ].filter(Boolean).join(' | ');
     }
-    const fidelityMismatch = IMPLEMENTATION_FIDELITY_PATTERNS.some((pattern) => pattern.test(candidate.notes));
-    if (fidelityMismatch) {
-      candidate.audit.openHighConfidenceFindings = Math.max(candidate.audit.openHighConfidenceFindings, 1);
-      candidate.status = 'rejected';
-      candidate.notes = [candidate.notes, 'Implementation fidelity mismatch: result does not match claimed FFT family']
-        .filter(Boolean)
-        .join(' | ');
-    }
+    syncFidelityMismatch(candidate);
     applyAuditSeverityPolicy(candidate, promoted);
     state.candidates.push(candidate);
+  }
+
+  for (const [proposalId, audit] of auditsByProposalId.entries()) {
+    const candidate = state.candidates.find((entry) =>
+      entry.candidateId === proposalId || entry.proposalId === proposalId,
+    );
+    if (!candidate) continue;
+    const promoted = state.activePromotedProposals.find((proposal) => proposal.proposalId === proposalId);
+    applyAuditRecordToCandidate(candidate, audit, promoted);
   }
 
   refreshBaselineCoverage(state);
@@ -346,6 +424,8 @@ export function recomputeFrontier(state, config) {
     }
   }
   const eligible = state.candidates.filter((candidate) =>
+    !REFERENCE_ONLY_FAMILIES.has(candidate.family)
+    &&
     candidate.hasBucketBaseline
     && candidate.compile.ok
     && candidate.validation.ok
@@ -438,3 +518,5 @@ export function chooseStopReason(state, config, limits) {
 
   return null;
 }
+
+export { applyAuditSeverityPolicy };

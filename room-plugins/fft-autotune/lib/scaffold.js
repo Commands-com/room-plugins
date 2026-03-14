@@ -1,5 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ASSETS_DIR = path.join(MODULE_DIR, '..', 'assets');
+const THIRD_PARTY_DIR = path.join(MODULE_DIR, '..', 'third_party');
 
 // The universal harness template. Parameterized via -DDFT_SIZE=N -DDFT_FUNC=func_name.
 // Handles: deterministic validation vectors, adaptive iteration calibration, benchmark
@@ -427,28 +432,75 @@ Important
 - Iteration count auto-calibrates so each trial takes >= 2ms.
 - Do NOT modify harness.c. If you need a different interface, adapt your FFT
   source to match the expected signature above.
+- A pinned Ne10 NEON reference pack is also scaffolded into this directory.
+  See NE10_USAGE.txt for details.
 `;
+
+function syncFileFromTemplate(filePath, content, createLabel, updateLabel, actions) {
+  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
+  if (existing === content) {
+    return;
+  }
+  fs.writeFileSync(filePath, content, 'utf-8');
+  actions.push(existing === null ? createLabel : updateLabel);
+}
+
+function syncCopiedFile(sourcePath, destPath, actions) {
+  const sourceBytes = fs.readFileSync(sourcePath);
+  const existingBytes = fs.existsSync(destPath) ? fs.readFileSync(destPath) : null;
+  if (existingBytes !== null && existingBytes.equals(sourceBytes)) {
+    return;
+  }
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  fs.writeFileSync(destPath, sourceBytes);
+  actions.push(existingBytes === null
+    ? `Created reference file ${destPath}`
+    : `Updated reference file ${destPath}`);
+}
+
+function syncDirectory(sourceDir, destDir, actions) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      syncDirectory(sourcePath, destPath, actions);
+    } else if (entry.isFile()) {
+      syncCopiedFile(sourcePath, destPath, actions);
+    }
+  }
+}
 
 export function scaffoldWorkspace(outputDir) {
   const actions = [];
 
   const harnessPath = path.join(outputDir, 'harness.c');
-  const existingHarness = fs.existsSync(harnessPath) ? fs.readFileSync(harnessPath, 'utf-8') : null;
-  if (existingHarness !== HARNESS_TEMPLATE) {
-    fs.writeFileSync(harnessPath, HARNESS_TEMPLATE, 'utf-8');
-    actions.push(existingHarness === null
-      ? `Created harness ${harnessPath}`
-      : `Updated harness ${harnessPath}`);
-  }
+  syncFileFromTemplate(
+    harnessPath,
+    HARNESS_TEMPLATE,
+    `Created harness ${harnessPath}`,
+    `Updated harness ${harnessPath}`,
+    actions);
 
   const usagePath = path.join(outputDir, 'HARNESS_USAGE.txt');
-  const existingUsage = fs.existsSync(usagePath) ? fs.readFileSync(usagePath, 'utf-8') : null;
-  if (existingUsage !== HARNESS_USAGE) {
-    fs.writeFileSync(usagePath, HARNESS_USAGE, 'utf-8');
-    actions.push(existingUsage === null
-      ? `Created harness usage guide ${usagePath}`
-      : `Updated harness usage guide ${usagePath}`);
-  }
+  syncFileFromTemplate(
+    usagePath,
+    HARNESS_USAGE,
+    `Created harness usage guide ${usagePath}`,
+    `Updated harness usage guide ${usagePath}`,
+    actions);
+
+  const ne10AdapterSource = path.join(ASSETS_DIR, 'ne10_adapter.c');
+  const ne10AdapterDest = path.join(outputDir, 'ne10_adapter.c');
+  syncCopiedFile(ne10AdapterSource, ne10AdapterDest, actions);
+
+  const ne10UsageSource = path.join(ASSETS_DIR, 'NE10_USAGE.txt');
+  const ne10UsageDest = path.join(outputDir, 'NE10_USAGE.txt');
+  syncCopiedFile(ne10UsageSource, ne10UsageDest, actions);
+
+  const ne10SourceDir = path.join(THIRD_PARTY_DIR, 'ne10');
+  const ne10DestDir = path.join(outputDir, 'third_party', 'ne10');
+  syncDirectory(ne10SourceDir, ne10DestDir, actions);
 
   return actions;
 }
@@ -461,5 +513,7 @@ export function getHarnessCompileHint(config) {
     `Compile: ${config.compilerCommand} ${flags} -DDFT_SIZE=<N> -DDFT_FUNC=dft_<N> your_fft.c ${config.outputDir}/harness.c -o out.bin -lm`,
     `Run:     ./out.bin ${config.validationSamples} ${config.benchmarkWarmups} ${config.benchmarkTrials} validation.json benchmark.json`,
     'Do NOT write custom harnesses. Use harness.c for all candidates.',
+    `A pinned Ne10 NEON reference pack is also scaffolded at: ${config.outputDir}/third_party/ne10`,
+    `Optional NE10 adapter: ${config.outputDir}/ne10_adapter.c (details in ${config.outputDir}/NE10_USAGE.txt)`,
   ].join('\n');
 }

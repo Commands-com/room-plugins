@@ -1,0 +1,54 @@
+NE10 Reference Pack
+===================
+
+This directory also contains a pinned Ne10 FFT reference pack under:
+  third_party/ne10/
+
+Use it as:
+- a real NEON source reference when writing Apple Silicon candidates
+- an optional benchmark/reference baseline
+- a guide to concrete arm_neon.h intrinsics patterns
+
+Included adapter
+----------------
+The scaffold also provides:
+  ne10_adapter.c
+
+It exports the room's required signatures:
+  void dft_64(const complex float* input, complex float* output);
+  void dft_256(const complex float* input, complex float* output);
+  void dft_1024(const complex float* input, complex float* output);
+
+The adapter caches Ne10 plan/config state per FFT size and reuses scratch
+buffers, so same-run benchmarks measure the NEON FFT plus marshaling cost
+rather than re-paying plan allocation and twiddle generation on every call.
+
+Compile example
+---------------
+  clang -O3 -ffast-math -march=native -std=gnu11 \
+    -Ithird_party/ne10/inc \
+    -Ithird_party/ne10/modules/dsp \
+    ne10_adapter.c \
+    third_party/ne10/modules/dsp/NE10_fft.c \
+    third_party/ne10/modules/dsp/NE10_fft_float32.c \
+    third_party/ne10/modules/dsp/NE10_fft_float32.neonintrinsic.c \
+    third_party/ne10/modules/dsp/NE10_fft_generic_float32.c \
+    -DDFT_SIZE=256 -DDFT_FUNC=dft_256 \
+    harness.c -o ne10_fft256.bin -lm
+
+Why -std=gnu11?
+---------------
+Ne10's FFT headers use GNU-style asm(...) declarators, so strict c11 is not
+enough for this reference pack. Generated scalar candidates can still use the
+room's normal compiler settings; this only applies when compiling the Ne10 pack.
+
+Important
+---------
+- The room's harness is still mandatory. Do NOT write a custom harness.
+- The room only targets power-of-two complex FFT buckets here. The adapter is
+  intentionally limited to those sizes.
+- Validation runs before benchmarking, so the cached plan is initialized before
+  the timed trials begin.
+- The adapter includes small compatibility shims for unused Ne10 fallback
+  symbols so the FP32 NEON path compiles cleanly without vendoring unrelated
+  int32/C++ sources.

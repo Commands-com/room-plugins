@@ -98,6 +98,42 @@
         ],
         "sortable": true,
         "filterable": ["bucketKey", "status", "owner"]
+      },
+      {
+        "type": "table",
+        "key": "baselines",
+        "label": "Baselines",
+        "columns": [
+          { "key": "bucketKey", "label": "Bucket", "width": 110 },
+          { "key": "kind", "label": "Type", "width": 110 },
+          { "key": "family", "label": "Family", "width": 170 },
+          { "key": "medianNs", "label": "Median (ns)", "width": 110 },
+          { "key": "deltaVsScalarPct", "label": "Vs Scalar %", "width": 90 },
+          { "key": "status", "label": "Status", "width": 90 },
+          { "key": "owner", "label": "Builder", "width": 120 }
+        ],
+        "sortable": true,
+        "filterable": ["bucketKey", "kind", "status", "owner"]
+      },
+      {
+        "type": "table",
+        "key": "candidates",
+        "label": "Candidates",
+        "columns": [
+          { "key": "bucketKey", "label": "Bucket", "width": 110 },
+          { "key": "family", "label": "Family", "width": 150 },
+          { "key": "medianNs", "label": "Median (ns)", "width": 110 },
+          { "key": "speedupPct", "label": "Speedup %", "width": 90 },
+          { "key": "status", "label": "Status", "width": 90 },
+          { "key": "issues", "label": "Issues", "width": 70 },
+          { "key": "baseline", "label": "Baseline", "width": 80 },
+          { "key": "owner", "label": "Builder", "width": 120 },
+          { "key": "attempts", "label": "Attempts", "width": 80 },
+          { "key": "repairMode", "label": "Repair", "width": 80 },
+          { "key": "blockedReason", "label": "Blocked Reason", "width": 320 }
+        ],
+        "sortable": true,
+        "filterable": ["bucketKey", "status", "baseline", "owner"]
       }
     ]
   },
@@ -216,9 +252,9 @@
   "setup": {
     "compatibilityGate": true,
     "compatibilityTitle": "FFT Preflight",
-    "compatibilityDescription": "Verify the workspace, safe output path, FFT size set, and compiler before creating the room.",
+    "compatibilityDescription": "Verify the workspace and compiler, then scaffold the FFT output directory before creating the room.",
     "checkLabel": "Run Preflight",
-    "fixLabel": "Create Output Dir",
+    "fixLabel": "Complete Room Setup",
     "allowMakeCompatible": true
   }
 }

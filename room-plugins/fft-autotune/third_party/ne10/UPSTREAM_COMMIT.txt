@@ -1,0 +1,4 @@
+Upstream project: https://github.com/projectNe10/Ne10
+Pinned commit: 1f059a764d0e1bc2481c0055c0e71538470baa83
+Snapshot scope: minimal FP32 complex FFT subset used as a vendored NEON reference pack
+Vendored from: /tmp/ne10-upstream

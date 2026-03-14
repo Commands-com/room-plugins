@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { CODE_SNIPPET_CHAR_LIMIT, PHASES, SOURCE_FILE_EXTENSIONS } from './constants.js';
 import { getConfig } from './config.js';
-import { getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
+import { getExpectedBucketKeys, getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
 import { buildRepairDirectives } from './planning.js';
 import { computeBestImprovementPct, findCandidateById, sortCandidatesForFrontier } from './candidates.js';
 import { isSafeSubpath, safeTrim } from './utils.js';
@@ -147,6 +147,72 @@ export function buildFrontierRows(state) {
       status: candidate.status,
       owner: candidate.implementedByWorkerId || '',
     }));
+}
+
+function latestReferenceCandidate(state, bucketKey) {
+  return state.candidates
+    .filter((candidate) =>
+      candidate.bucketKey === bucketKey
+      && candidate.family === 'ne10_neon_reference',
+    )
+    .sort((left, right) => {
+      const cycleDelta = (right.cycle || 0) - (left.cycle || 0);
+      if (cycleDelta !== 0) return cycleDelta;
+      const benchmarkDelta = Number(right.benchmark?.ok === true) - Number(left.benchmark?.ok === true);
+      if (benchmarkDelta !== 0) return benchmarkDelta;
+      return (left.benchmark?.medianNs || Number.POSITIVE_INFINITY) - (right.benchmark?.medianNs || Number.POSITIVE_INFINITY);
+    })[0] || null;
+}
+
+function summarizeBaselineStatus(record) {
+  if (!record) return 'missing';
+  if (record.benchmark?.ok) return 'ready';
+  if (record.validation?.ok) return 'validated';
+  if (record.compile?.ok) return 'compiled';
+  return 'attempted';
+}
+
+function summarizeReferenceStatus(candidate) {
+  if (!candidate) return 'missing';
+  if (candidate.benchmark?.ok) return 'ready';
+  if (candidate.validation?.ok) return 'validated';
+  if (candidate.compile?.ok) return 'compiled';
+  return candidate.status || 'attempted';
+}
+
+function buildBaselineRows(state, config) {
+  const rows = [];
+
+  for (const bucketKey of getExpectedBucketKeys(config)) {
+    const canonicalBaseline = state.baselines[bucketKey] || null;
+    const baselineArtifact = state.baselineArtifacts[bucketKey] || null;
+    const baselineAttempt = state.baselineAttempts[bucketKey] || null;
+    const ne10Reference = latestReferenceCandidate(state, bucketKey);
+
+    rows.push({
+      bucketKey,
+      kind: 'scalar_baseline',
+      family: baselineArtifact?.family || baselineAttempt?.family || 'baseline_reference',
+      medianNs: Number.isFinite(canonicalBaseline?.medianNs) ? Math.round(canonicalBaseline.medianNs) : '',
+      deltaVsScalarPct: '',
+      status: canonicalBaseline ? 'ready' : summarizeBaselineStatus(baselineAttempt),
+      owner: baselineArtifact?.implementedByWorkerId || baselineAttempt?.implementedByWorkerId || '',
+    });
+
+    rows.push({
+      bucketKey,
+      kind: 'ne10_reference',
+      family: ne10Reference?.family || 'ne10_neon_reference',
+      medianNs: Number.isFinite(ne10Reference?.benchmark?.medianNs) ? Math.round(ne10Reference.benchmark.medianNs) : '',
+      deltaVsScalarPct: Number.isFinite(ne10Reference?.benchmark?.speedupVsBaseline)
+        ? Number(((ne10Reference.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
+        : '',
+      status: summarizeReferenceStatus(ne10Reference),
+      owner: ne10Reference?.implementedByWorkerId || '',
+    });
+  }
+
+  return rows;
 }
 
 function latestBucketCandidate(state, bucketKey) {
@@ -303,6 +369,7 @@ export function emitStateMetrics(ctx, state) {
       max: 100,
     },
     degradedDiversity: state.degradedDiversity ? 1 : 0,
+    baselines: { rows: buildBaselineRows(state, config) },
     frontier: { rows: buildFrontierRows(state) },
     blockedBuckets: { rows: buildBlockedBucketRows(state, config) },
     candidates: { rows: buildCandidateRows(state, config) },
@@ -310,4 +377,4 @@ export function emitStateMetrics(ctx, state) {
   });
 }
 
-export { buildBlockedBucketRows, buildCandidateRows, countCandidateSummary };
+export { buildBaselineRows, buildBlockedBucketRows, buildCandidateRows, countCandidateSummary };

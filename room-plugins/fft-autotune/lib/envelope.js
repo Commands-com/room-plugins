@@ -129,37 +129,45 @@ function normalizeBuilderResult(result = {}, config, workerId) {
     twiddleStrategy: safeTrim(result.twiddleStrategy, 120) || 'precompute_table',
     simdStrategy: safeTrim(result.simdStrategy, 40) === 'scalar' ? 'scalar' : 'neon',
     compile: {
-      ok: Boolean(compile.ok ?? (optionalFiniteNumber(compile.compileReturnCode ?? compile.exitCode) === 0 && safeTrim(compile.compiledBinaryPath || compile.binaryPath, 1000))),
-      command: safeTrim(compile.command || compile.compileCommand, 600),
-      exitCode: optionalFiniteNumber(compile.exitCode ?? compile.compileReturnCode),
-      stderrPath: safeTrim(compile.stderrPath || compile.compileStderr, 1000),
-      binaryPath: safeTrim(compile.binaryPath || compile.compiledBinaryPath, 1000),
+      ok: Boolean(compile.ok
+        ?? result.compiled
+        ?? result.compileOk
+        ?? (optionalFiniteNumber(compile.compileReturnCode ?? compile.exitCode ?? result.compileReturnCode ?? result.exitCode) === 0
+          && safeTrim(compile.compiledBinaryPath || compile.binaryPath || result.compiledBinaryPath || result.binaryPath, 1000))),
+      command: safeTrim(compile.command || compile.compileCommand || result.compileCommand, 600),
+      exitCode: optionalFiniteNumber(compile.exitCode ?? compile.compileReturnCode ?? result.exitCode ?? result.compileReturnCode),
+      stderrPath: safeTrim(compile.stderrPath || compile.compileStderr || result.stderrPath || result.compileStderr, 1000),
+      binaryPath: safeTrim(compile.binaryPath || compile.compiledBinaryPath || result.binaryPath || result.compiledBinaryPath, 1000),
     },
     validation: {
-      ok: Boolean(validation.ok ?? (optionalFiniteNumber(validation.validationReturnCode) === 0 && validation.sampleCount > 0)),
-      sampleCount: clampInt(validation.sampleCount, 0, 100000, 0),
-      maxError: optionalFiniteNumber(validation.maxError),
-      tolerance: optionalFiniteNumber(validation.tolerance) ?? 1e-3,
-      failureReason: safeTrim(validation.failureReason, 800),
-      validationPath: safeTrim(validation.validationPath || validation.samplePath, 1000),
-      firstFailIndex: optionalInteger(validation.firstFailIndex),
-      firstFailInputLabel: safeTrim(validation.firstFailInputLabel || validation.failingInputLabel, 160),
-      firstFailExpected: safeTrim(validation.firstFailExpected, 240),
-      firstFailActual: safeTrim(validation.firstFailActual, 240),
-      firstFailError: optionalFiniteNumber(validation.firstFailError),
-      orderingHint: safeTrim(validation.orderingHint, 240),
-      suspectedIssue: safeTrim(validation.suspectedIssue, 240),
-      diagnosticSummary: safeTrim(validation.diagnosticSummary, 600),
+      ok: Boolean(validation.ok
+        ?? result.validated
+        ?? result.validationOk
+        ?? (optionalFiniteNumber(validation.validationReturnCode ?? result.validationReturnCode) === 0
+          && clampInt(validation.sampleCount ?? result.sampleCount, 0, 100000, 0) > 0)),
+      sampleCount: clampInt(validation.sampleCount ?? result.sampleCount, 0, 100000, 0),
+      maxError: optionalFiniteNumber(validation.maxError ?? result.maxError),
+      tolerance: optionalFiniteNumber(validation.tolerance ?? result.tolerance) ?? 1e-3,
+      failureReason: safeTrim(validation.failureReason || result.failureReason, 800),
+      validationPath: safeTrim(validation.validationPath || validation.samplePath || result.validationPath || result.samplePath, 1000),
+      firstFailIndex: optionalInteger(validation.firstFailIndex ?? result.firstFailIndex),
+      firstFailInputLabel: safeTrim(validation.firstFailInputLabel || validation.failingInputLabel || result.firstFailInputLabel || result.failingInputLabel, 160),
+      firstFailExpected: safeTrim(validation.firstFailExpected || result.firstFailExpected, 240),
+      firstFailActual: safeTrim(validation.firstFailActual || result.firstFailActual, 240),
+      firstFailError: optionalFiniteNumber(validation.firstFailError ?? result.firstFailError),
+      orderingHint: safeTrim(validation.orderingHint || result.orderingHint, 240),
+      suspectedIssue: safeTrim(validation.suspectedIssue || result.suspectedIssue, 240),
+      diagnosticSummary: safeTrim(validation.diagnosticSummary || result.diagnosticSummary, 600),
     },
     benchmark: {
-      ok: Boolean(benchmark.ok),
-      warmups: clampInt(benchmark.warmups, 0, 100000, config.benchmarkWarmups),
-      trials: clampInt(benchmark.trials, 0, 100000, config.benchmarkTrials),
-      medianNs: optionalFiniteNumber(benchmark.medianNs),
-      p95Ns: optionalFiniteNumber(benchmark.p95Ns),
-      cvPct: optionalFiniteNumber(benchmark.cvPct),
-      speedupVsBaseline: optionalFiniteNumber(benchmark.speedupVsBaseline),
-      samplePath: safeTrim(benchmark.samplePath, 1000),
+      ok: Boolean(benchmark.ok ?? result.benchmarked ?? result.benchmarkOk),
+      warmups: clampInt(benchmark.warmups ?? result.warmups, 0, 100000, config.benchmarkWarmups),
+      trials: clampInt(benchmark.trials ?? result.trials, 0, 100000, config.benchmarkTrials),
+      medianNs: optionalFiniteNumber(benchmark.medianNs ?? result.medianNs),
+      p95Ns: optionalFiniteNumber(benchmark.p95Ns ?? result.p95Ns),
+      cvPct: optionalFiniteNumber(benchmark.cvPct ?? result.cvPct),
+      speedupVsBaseline: optionalFiniteNumber(benchmark.speedupVsBaseline ?? result.speedupVsBaseline),
+      samplePath: safeTrim(benchmark.samplePath || result.samplePath, 1000),
     },
     baselineBenchmarks: Array.isArray(result?.baselineBenchmarks)
       ? result.baselineBenchmarks

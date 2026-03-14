@@ -88,6 +88,25 @@ export const SIMD_GAP_PATTERNS = Object.freeze([
   /lacks? neon/i,
 ]);
 
+export const NONBLOCKING_FIDELITY_PATTERNS = Object.freeze([
+  /diverge[s]? from promoted metadata/i,
+  /fidelity still differs from the promoted/i,
+  /rather than the promoted permutation\/leaf metadata/i,
+  /promoted postpass bit-reversal/i,
+  /promoted permutation\/leaf description/i,
+]);
+
+export const METHODOLOGY_GAP_PATTERNS = Object.freeze([
+  /not apples-to-apples/i,
+  /warmed before timing/i,
+  /baseline still computes twiddles in-band/i,
+  /warm-start throughput/i,
+  /methodolog(?:y|ical)/i,
+  /small-n result is not stable/i,
+  /needs confirmation/i,
+  /audit rerun/i,
+]);
+
 export const SOURCE_FILE_EXTENSIONS = Object.freeze([
   '.c',
   '.cc',

@@ -15,6 +15,7 @@ The room already supports:
 - compile -> validate -> benchmark -> frontier ranking
 - blocked-bucket reporting and repair-mode escalation
 - report tables plus multi-block winner source output via `winnerSources: { blocks: [...] }`
+- a scaffolded Ne10 FP32 FFT reference pack for real `arm_neon.h` source context
 
 Important current reality:
 
@@ -42,6 +43,30 @@ Important current reality:
   Final report metrics, frontier rows, blocked bucket rows, winner source code blocks.
 - `lib/config.js`
   Setup normalization and compatibility hooks.
+
+## Ne10 Reference Pack
+
+The plugin now vendors a minimal pinned Ne10 FP32 FFT subset under:
+
+- `third_party/ne10/`
+
+Each scaffolded workspace also gets:
+
+- `ne10_adapter.c`
+- `NE10_USAGE.txt`
+- `third_party/ne10/...`
+
+Use this for three things:
+
+- studying real `arm_neon.h` FFT intrinsics patterns
+- compiling a known-good NEON-backed reference/baseline through the room harness
+- adapting proven SIMD patterns into new candidate code
+
+Important caveat:
+
+- the adapter currently targets the room's power-of-two complex FFT buckets only
+- the Ne10 pack requires `-std=gnu11` because of GNU-style `asm(...)` declarators in upstream headers
+- the room harness remains mandatory even when using the Ne10 adapter
 
 ## Host Capabilities You Can Rely On
 
