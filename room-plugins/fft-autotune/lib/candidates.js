@@ -335,15 +335,15 @@ export function computeBestImprovementPct(state) {
 }
 
 export function recomputeFrontier(state, config) {
-  if (getMissingBaselineBucketKeys(state, config).length > 0) {
-    state.bestByBucket = {};
-    state.frontierIds = [];
-    for (const candidate of state.candidates) {
-      if (candidate.status === 'winner' || candidate.status === 'frontier') {
-        candidate.status = candidate.benchmark.ok ? 'benchmarked' : candidate.status;
-      }
+  // Demote previous frontier/winner candidates whose bucket lost its baseline.
+  // Buckets with valid baselines keep their frontier status.
+  for (const candidate of state.candidates) {
+    if (
+      (candidate.status === 'winner' || candidate.status === 'frontier')
+      && !candidate.hasBucketBaseline
+    ) {
+      candidate.status = candidate.benchmark.ok ? 'benchmarked' : candidate.status;
     }
-    return;
   }
   const eligible = state.candidates.filter((candidate) =>
     candidate.hasBucketBaseline
@@ -351,7 +351,8 @@ export function recomputeFrontier(state, config) {
     && candidate.validation.ok
     && candidate.benchmark.ok
     && candidate.audit.openHighConfidenceFindings === 0
-    && Number.isFinite(candidate.benchmark?.medianNs),
+    && Number.isFinite(candidate.benchmark?.medianNs)
+    && (candidate.benchmark.speedupVsBaseline || 0) >= 1.0,
   );
   const ranked = sortCandidatesForFrontier(eligible);
   const bestByBucket = {};

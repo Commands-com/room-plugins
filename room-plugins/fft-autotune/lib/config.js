@@ -12,6 +12,7 @@ import {
   normalizeStringArray,
   safeTrim,
 } from './utils.js';
+import { scaffoldWorkspace } from './scaffold.js';
 
 export function normalizeRoomConfig(input = {}) {
   const workspacePath = safeTrim(input.workspacePath || '', 4000);
@@ -284,6 +285,15 @@ export async function makeCompatible(payload = {}) {
     if (!fs.existsSync(roomConfig.outputDir) && isSafeSubpath(roomConfig.workspacePath, roomConfig.outputDir)) {
       fs.mkdirSync(roomConfig.outputDir, { recursive: true });
       actions.push(`Created output directory ${roomConfig.outputDir}`);
+    }
+  } catch (err) {
+    errors.push(err?.message || String(err));
+  }
+
+  try {
+    if (fs.existsSync(roomConfig.outputDir) && isSafeSubpath(roomConfig.workspacePath, roomConfig.outputDir)) {
+      const scaffoldActions = scaffoldWorkspace(roomConfig.outputDir);
+      actions.push(...scaffoldActions);
     }
   } catch (err) {
     errors.push(err?.message || String(err));

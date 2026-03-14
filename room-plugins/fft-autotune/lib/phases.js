@@ -68,6 +68,7 @@ export function createInitialState(ctx) {
     ).length,
     proposalBacklog: [],
     activePromotedProposals: [],
+    reexploreAttempts: 0,
     discoveryNotes: [],
     candidates: [],
     baselines: {},

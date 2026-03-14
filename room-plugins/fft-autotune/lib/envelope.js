@@ -87,31 +87,56 @@ function normalizeAuditEntry(audit = {}) {
   };
 }
 
+function normalizeBucketKey(rawKey, rawSize, config) {
+  const key = safeTrim(rawKey, 120);
+  // Already fully qualified: "n64-apple_silicon_neon"
+  if (key && key.includes('-')) return key;
+  // Bare bucket like "n64" or "n256" — extract size and resolve
+  const bareMatch = String(key || '').match(/^n?(\d+)$/);
+  const sizeFromKey = bareMatch ? Number(bareMatch[1]) : NaN;
+  const size = isPowerOfTwo(sizeFromKey) ? sizeFromKey : (Number(rawSize) || config.targetSizes[0] || 64);
+  return resolveBucketKey(isPowerOfTwo(size) ? size : (config.targetSizes[0] || 64), config);
+}
+
+function resolveNestedObject(result, primary, ...alternates) {
+  if (result?.[primary] && typeof result[primary] === 'object') return result[primary];
+  for (const key of alternates) {
+    const val = result?.[key];
+    if (val && typeof val === 'object') {
+      // Handle nested wrappers like compileEvidence: { ... } or benchmarkEvidence: { benchmarkJson: { ... } }
+      const innerKeys = Object.keys(val);
+      const jsonKey = innerKeys.find((k) => k.endsWith('Json'));
+      return jsonKey && typeof val[jsonKey] === 'object' ? { ...val, ...val[jsonKey] } : val;
+    }
+  }
+  return {};
+}
+
 function normalizeBuilderResult(result = {}, config, workerId) {
-  const benchmark = result?.benchmark && typeof result.benchmark === 'object' ? result.benchmark : {};
-  const validation = result?.validation && typeof result.validation === 'object' ? result.validation : {};
-  const compile = result?.compile && typeof result.compile === 'object' ? result.compile : {};
+  const compile = resolveNestedObject(result, 'compile', 'compileEvidence');
+  const validation = resolveNestedObject(result, 'validation', 'validationEvidence');
+  const benchmark = resolveNestedObject(result, 'benchmark', 'benchmarkEvidence');
   const artifactPaths = normalizeStringArray(result?.artifactPaths || [], 12);
 
   return {
-    proposalId: safeTrim(result.proposalId, 120),
-    bucketKey: safeTrim(result.bucketKey, 120) || resolveBucketKey(Number(result.size) || config.targetSizes[0] || 64, config),
-    family: safeTrim(result.family, 120) || 'cooley_tukey_shallow',
+    proposalId: safeTrim(result.proposalId || result.specId, 120),
+    bucketKey: normalizeBucketKey(result.bucketKey || result.bucket, result.size || result.dftSize, config),
+    family: safeTrim(result.family || result.familyName, 120) || 'cooley_tukey_shallow',
     isBaseline: Boolean(result.isBaseline),
-    treeSpec: safeTrim(result.treeSpec, 200) || 'balanced radix-4 decomposition',
+    treeSpec: safeTrim(result.treeSpec || result.treeDescription, 200) || 'balanced radix-4 decomposition',
     leafSizes: normalizeNumberArray(result.leafSizes || [], 8).map((value) => Math.floor(value)),
     permutationStrategy: safeTrim(result.permutationStrategy, 120) || 'bit_reverse_postpass',
     twiddleStrategy: safeTrim(result.twiddleStrategy, 120) || 'precompute_table',
     simdStrategy: safeTrim(result.simdStrategy, 40) === 'scalar' ? 'scalar' : 'neon',
     compile: {
-      ok: Boolean(compile.ok),
-      command: safeTrim(compile.command, 600),
-      exitCode: optionalFiniteNumber(compile.exitCode),
-      stderrPath: safeTrim(compile.stderrPath, 1000),
-      binaryPath: safeTrim(compile.binaryPath, 1000),
+      ok: Boolean(compile.ok ?? (optionalFiniteNumber(compile.compileReturnCode ?? compile.exitCode) === 0 && safeTrim(compile.compiledBinaryPath || compile.binaryPath, 1000))),
+      command: safeTrim(compile.command || compile.compileCommand, 600),
+      exitCode: optionalFiniteNumber(compile.exitCode ?? compile.compileReturnCode),
+      stderrPath: safeTrim(compile.stderrPath || compile.compileStderr, 1000),
+      binaryPath: safeTrim(compile.binaryPath || compile.compiledBinaryPath, 1000),
     },
     validation: {
-      ok: Boolean(validation.ok),
+      ok: Boolean(validation.ok ?? (optionalFiniteNumber(validation.validationReturnCode) === 0 && validation.sampleCount > 0)),
       sampleCount: clampInt(validation.sampleCount, 0, 100000, 0),
       maxError: optionalFiniteNumber(validation.maxError),
       tolerance: optionalFiniteNumber(validation.tolerance) ?? 1e-3,

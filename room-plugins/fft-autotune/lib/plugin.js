@@ -4,7 +4,7 @@ import { PHASES } from './constants.js';
 import { chooseStopReason, evaluateImprovement, mergeCycleArtifacts, recomputeFrontier, updateDiversity } from './candidates.js';
 import { getMissingWinnerBucketKeys } from './buckets.js';
 import { createInitialState, derivePartialPhase, advancePhase, setPhase } from './phases.js';
-import { fallbackSeedProposals, enqueueProposals, selectActivePromotedProposals, buildPendingDecision } from './planning.js';
+import { fallbackSeedProposals, winnerMutationProposals, enqueueProposals, selectActivePromotedProposals, buildPendingDecision } from './planning.js';
 import { emitStateMetrics } from './report.js';
 
 export function createPlugin() {
@@ -110,6 +110,31 @@ export function createPlugin() {
       return buildPendingDecision(ctx, state, config);
     }
 
+    if (state.pendingFanOut === 'reexplore') {
+      const { proposals } = mergeCycleArtifacts(state, responses, config);
+      enqueueProposals(state, proposals, config);
+
+      selectActivePromotedProposals(state, config);
+      if (state.activePromotedProposals.length === 0) {
+        setPhase(state, PHASES.COMPLETE);
+        state.pendingFanOut = null;
+        ctx.setState(state);
+        emitStateMetrics(ctx, state);
+        return {
+          type: 'stop',
+          reason: state.frontierIds.length > 0 && getMissingWinnerBucketKeys(state, config).length === 0
+            ? 'convergence'
+            : 'convergence_with_open_issues',
+        };
+      }
+
+      setPhase(state, PHASES.CANDIDATE_CODEGEN);
+      state.pendingFanOut = 'cycle';
+      ctx.setState(state);
+      emitStateMetrics(ctx, state);
+      return buildPendingDecision(ctx, state, config);
+    }
+
     if (state.pendingFanOut === 'cycle') {
       const { proposals } = mergeCycleArtifacts(state, responses, config);
       enqueueProposals(state, proposals, config);
@@ -119,6 +144,20 @@ export function createPlugin() {
 
       const stopReason = chooseStopReason(state, config, ctx.limits);
       if (stopReason) {
+        if (
+          stopReason === 'convergence_with_open_issues'
+          && getMissingWinnerBucketKeys(state, config).length > 0
+          && (state.reexploreAttempts || 0) < 2
+          && state.cycleIndex < (ctx.limits?.maxCycles || 6)
+        ) {
+          state.reexploreAttempts = (state.reexploreAttempts || 0) + 1;
+          setPhase(state, PHASES.SEARCH_PLANNING);
+          state.pendingFanOut = 'reexplore';
+          ctx.setState(state);
+          emitStateMetrics(ctx, state);
+          return buildPendingDecision(ctx, state, config);
+        }
+
         setPhase(state, PHASES.COMPLETE);
         state.pendingFanOut = null;
         ctx.setState(state);
@@ -130,11 +169,11 @@ export function createPlugin() {
       }
 
       if (state.proposalBacklog.length === 0) {
-        enqueueProposals(
-          state,
-          fallbackSeedProposals(config, new Set(getMissingWinnerBucketKeys(state, config))),
-          config,
-        );
+        const missingSet = new Set(getMissingWinnerBucketKeys(state, config));
+        enqueueProposals(state, winnerMutationProposals(state, config, missingSet), config);
+        if (state.proposalBacklog.length === 0) {
+          enqueueProposals(state, fallbackSeedProposals(config, missingSet), config);
+        }
       }
 
       state.cycleIndex += 1;
@@ -142,13 +181,23 @@ export function createPlugin() {
       setPhase(state, PHASES.FRONTIER_REFINE);
       selectActivePromotedProposals(state, config);
       if (state.activePromotedProposals.length === 0) {
+        const missingWinnerBuckets = getMissingWinnerBucketKeys(state, config);
+        if (missingWinnerBuckets.length > 0 && (state.reexploreAttempts || 0) < 2) {
+          state.reexploreAttempts = (state.reexploreAttempts || 0) + 1;
+          setPhase(state, PHASES.SEARCH_PLANNING);
+          state.pendingFanOut = 'reexplore';
+          ctx.setState(state);
+          emitStateMetrics(ctx, state);
+          return buildPendingDecision(ctx, state, config);
+        }
+
         setPhase(state, PHASES.COMPLETE);
         state.pendingFanOut = null;
         ctx.setState(state);
         emitStateMetrics(ctx, state);
         return {
           type: 'stop',
-          reason: state.frontierIds.length > 0 && getMissingWinnerBucketKeys(state, config).length === 0
+          reason: state.frontierIds.length > 0 && missingWinnerBuckets.length === 0
             ? 'convergence'
             : 'convergence_with_open_issues',
         };

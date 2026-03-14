@@ -1,6 +1,7 @@
 import { DEFAULT_FAMILIES } from './constants.js';
 import { getExpectedBucketKeys, getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
 import { findCandidateById } from './candidates.js';
+import { getHarnessCompileHint } from './scaffold.js';
 import { isPowerOfTwo, resolveBucketKey, safeTrim } from './utils.js';
 
 export function resolveBucketSize(bucketKey, fallbackSize) {
@@ -306,12 +307,18 @@ export function buildBaselineTargets(ctx, state, config) {
             `Benchmark warmups: ${config.benchmarkWarmups}`,
             `Benchmark trials: ${config.benchmarkTrials}`,
             '',
+            '=== HARNESS (MANDATORY) ===',
+            getHarnessCompileHint(config),
+            'Read HARNESS_USAGE.txt in the output directory for full details.',
+            '',
             'Establish a fresh same-run baseline for every missing bucket below before candidate ranking begins:',
             baselineText,
             '',
             'A baseline must come from compile + validate + benchmark evidence produced in this run.',
             'You may reuse existing workspace source only if you compile, validate, and benchmark it again now.',
-            'If no suitable baseline exists, generate a straightforward correct reference-quality implementation and harness for that bucket.',
+            'If no suitable baseline exists, generate a straightforward correct iterative radix-4 DIF reference implementation for that bucket.',
+            'Your baseline .c file must export: void dft_<N>(const complex float* input, complex float* output);',
+            'Compile it with harness.c using the command above. Do NOT write a custom harness.',
             '',
             'Reply with JSON only using this shape:',
             '{',
@@ -339,7 +346,6 @@ export function buildBaselineTargets(ctx, state, config) {
             '  "audits": []',
             '}',
             '',
-            'Before random validation, make the harness run deterministic vectors first: impulse, all-ones, single-tone, alternating-sign, then fixed-seed random.',
             'If a baseline bucket fails, report the real failure diagnostics instead of omitting the bucket.',
           ].join('\n'),
         };
@@ -390,6 +396,50 @@ export function buildBaselineTargets(ctx, state, config) {
     });
 }
 
+export function buildTriedCandidatesSummary(state) {
+  if (state.candidates.length === 0) return '[]';
+  const seen = new Set();
+  const rows = [...state.candidates]
+    .sort((a, b) => {
+      const cycleDelta = (b.cycle || 0) - (a.cycle || 0);
+      if (cycleDelta !== 0) return cycleDelta;
+      return (b.bucketKey || '').localeCompare(a.bucketKey || '');
+    })
+    .filter((candidate) => {
+      const key = [
+        candidate.bucketKey,
+        candidate.family,
+        candidate.treeSpec,
+        candidate.simdStrategy,
+      ].join('::');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 24)
+    .sort((a, b) => {
+      const bucketCmp = (a.bucketKey || '').localeCompare(b.bucketKey || '');
+      if (bucketCmp !== 0) return bucketCmp;
+      const cycleDelta = (b.cycle || 0) - (a.cycle || 0);
+      if (cycleDelta !== 0) return cycleDelta;
+      return (a.family || '').localeCompare(b.family || '');
+    })
+    .map((c) => ({
+      cycle: c.cycle,
+      bucketKey: c.bucketKey,
+      family: c.family,
+      treeSpec: c.treeSpec,
+      simdStrategy: c.simdStrategy,
+      status: c.status,
+      medianNs: Number.isFinite(c.benchmark?.medianNs) ? Math.round(c.benchmark.medianNs) : null,
+      speedupPct: Number.isFinite(c.benchmark?.speedupVsBaseline)
+        ? Number(((c.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
+        : null,
+      issues: c.audit?.openHighConfidenceFindings || 0,
+    }));
+  return JSON.stringify(rows, null, 2);
+}
+
 export function buildCycleTargets(ctx, state, config) {
   const frontierRows = buildPromptFrontierRows(state).slice(0, 6);
   const frontierText = frontierRows.length > 0
@@ -409,6 +459,7 @@ export function buildCycleTargets(ctx, state, config) {
   const missingBaselineText = missingBaselineBuckets.length > 0
     ? JSON.stringify(missingBaselineBuckets, null, 2)
     : '[]';
+  const triedCandidatesText = buildTriedCandidatesSummary(state);
 
   return getLaneParticipantViews(ctx, state).map(({ participant, lane, laneIndex }) => {
 
@@ -426,6 +477,9 @@ export function buildCycleTargets(ctx, state, config) {
             `Benchmark warmups: ${config.benchmarkWarmups}`,
             `Benchmark trials: ${config.benchmarkTrials}`,
             `Benchmark override: ${config.benchmarkCommand || '(none)'}`,
+            '',
+            '=== HARNESS (MANDATORY) ===',
+            getHarnessCompileHint(config),
             '',
             'Implement, compile, validate, and benchmark these promoted FFT specs:',
             promotedText,
@@ -455,7 +509,7 @@ export function buildCycleTargets(ctx, state, config) {
             '      "permutationStrategy": "bit_reverse_postpass",',
             '      "twiddleStrategy": "precompute_table",',
             '      "simdStrategy": "neon",',
-            '      "compile": { "ok": true, "command": "clang ...", "exitCode": 0, "binaryPath": "...", "stderrPath": "" },',
+            '      "compile": { "ok": true, "command": "clang -O3 ... -DDFT_SIZE=64 -DDFT_FUNC=dft_64 my_fft.c harness.c -o out.bin -lm", "exitCode": 0, "binaryPath": "...", "stderrPath": "" },',
             '      "validation": { "ok": true, "sampleCount": 64, "maxError": 0.0004, "tolerance": 0.001, "failureReason": "", "validationPath": "path/to/validation.json", "firstFailInputLabel": "single_tone_bin_1", "firstFailIndex": 17, "firstFailExpected": "0.0 + 0.0i", "firstFailActual": "0.0012 - 0.0003i", "firstFailError": 0.00124, "orderingHint": "matches after bit reversal", "suspectedIssue": "output permutation mismatch", "diagnosticSummary": "deterministic vectors pass except natural-order compare" },',
             '      "benchmark": { "ok": true, "warmups": 5, "trials": 30, "medianNs": 12345, "p95Ns": 13000, "cvPct": 2.1, "speedupVsBaseline": 1.12, "samplePath": "..." },',
             '      "baselineBenchmarks": [ { "bucketKey": "n64-apple_silicon_neon", "medianNs": 13800, "p95Ns": 14200, "cvPct": 2.8 } ],',
@@ -467,7 +521,10 @@ export function buildCycleTargets(ctx, state, config) {
             '  "audits": []',
             '}',
             '',
-            'Before random validation, update or regenerate the harness to run deterministic vectors first: impulse, all-ones, single-tone, alternating-sign, then one fixed-seed random input.',
+            'Your FFT .c file must export: void dft_<N>(const complex float* input, complex float* output);',
+            'Compile with harness.c using the command above. Do NOT write a custom harness or benchmark loop.',
+            'The harness handles validation (deterministic vectors + random), benchmark (warmups, trials, timing), and JSON output.',
+            'Read the validation.json and benchmark.json produced by the harness to fill in the result fields above.',
             'If any requested bucket is still missing a same-run baseline, establish that baseline before expecting frontier eligibility for any bucket.',
             'If validation fails, emit the diagnostic fields above using real workspace evidence instead of only "max error exceeded tolerance".',
             'Use the recent diagnostics to target the likely bug class: permutation/order, twiddle sign, stride/indexing, normalization, or accumulation precision.',
@@ -501,6 +558,9 @@ export function buildCycleTargets(ctx, state, config) {
             '',
             'Buckets in repair mode due to repeated failure signatures:',
             repairText,
+            '',
+            'All candidates tried so far in this room:',
+            triedCandidatesText,
             '',
             'Reply with JSON only using this shape:',
             '{',
@@ -560,6 +620,9 @@ export function buildCycleTargets(ctx, state, config) {
           'Buckets in repair mode due to repeated failure signatures:',
           repairText,
           '',
+          'All candidates tried so far in this room (do NOT re-propose these):',
+          triedCandidatesText,
+          '',
           'Reply with JSON only using this shape:',
           '{',
           '  "summary": "short planning summary",',
@@ -587,8 +650,227 @@ export function buildCycleTargets(ctx, state, config) {
     });
 }
 
+export function buildReexplorationTargets(ctx, state, config) {
+  const missingWinnerBuckets = getMissingWinnerBucketKeys(state, config);
+  const missingBucketText = JSON.stringify(missingWinnerBuckets, null, 2);
+  const frontierRows = buildPromptFrontierRows(state).slice(0, 6);
+  const frontierText = frontierRows.length > 0
+    ? JSON.stringify(frontierRows, null, 2)
+    : '[]';
+  const diagnostics = buildRecentFailureDiagnostics(state);
+  const diagnosticsText = diagnostics.length > 0
+    ? JSON.stringify(diagnostics, null, 2)
+    : '[]';
+  const repairDirectives = buildRepairDirectives(state, config);
+  const repairText = repairDirectives.length > 0
+    ? JSON.stringify(repairDirectives, null, 2)
+    : '[]';
+
+  const triedByBucket = {};
+  for (const bucketKey of missingWinnerBuckets) {
+    const bucketCandidates = state.candidates.filter((c) => c.bucketKey === bucketKey);
+    triedByBucket[bucketKey] = bucketCandidates.map((c) => ({
+      family: c.family,
+      treeSpec: c.treeSpec,
+      simdStrategy: c.simdStrategy,
+      status: c.status,
+      issues: c.audit?.openHighConfidenceFindings || 0,
+      notes: c.notes ? c.notes.slice(0, 200) : '',
+    }));
+  }
+  const triedText = JSON.stringify(triedByBucket, null, 2);
+
+  const winnersByBucket = {};
+  for (const candidateId of state.frontierIds) {
+    const winner = findCandidateById(state, candidateId);
+    if (!winner) continue;
+    winnersByBucket[winner.bucketKey] = {
+      family: winner.family,
+      treeSpec: winner.treeSpec,
+      leafSizes: winner.leafSizes,
+      permutationStrategy: winner.permutationStrategy,
+      twiddleStrategy: winner.twiddleStrategy,
+      simdStrategy: winner.simdStrategy,
+      medianNs: winner.benchmark?.medianNs,
+      speedupPct: Number.isFinite(winner.benchmark?.speedupVsBaseline)
+        ? Number(((winner.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
+        : null,
+    };
+  }
+  const winnersText = Object.keys(winnersByBucket).length > 0
+    ? JSON.stringify(winnersByBucket, null, 2)
+    : '[]';
+
+  return getLaneParticipantViews(ctx, state).map(({ participant, lane, laneIndex }) => {
+    const commonContext = [
+      `You are the ${lane} role in a targeted re-exploration phase (cycle ${state.cycleIndex}).`,
+      ...buildLanePromptPreamble(participant, lane, laneIndex),
+      '',
+      `Workspace: ${config.workspacePath}`,
+      `Target architecture: ${config.targetArch}`,
+      '',
+      'The proposal backlog is exhausted but these buckets still lack a winning candidate:',
+      missingBucketText,
+      '',
+      'Previously attempted candidates for these buckets (all failed or were blocked):',
+      triedText,
+      '',
+      'Winning families from solved buckets (consider adapting these for missing buckets):',
+      winnersText,
+      '',
+      'Current frontier for solved buckets:',
+      frontierText,
+      '',
+      'Recent failure diagnostics:',
+      diagnosticsText,
+      '',
+      'Repair directives from repeated failure patterns:',
+      repairText,
+    ];
+
+    const jsonShape = [
+      'Reply with JSON only using this shape:',
+      '{',
+      '  "summary": "re-exploration strategy for missing buckets",',
+      '  "candidateProposals": [',
+      '    {',
+      '      "bucketKey": "n1024-apple_silicon_neon",',
+      '      "size": 1024,',
+      '      "family": "stockham_autosort",',
+      '      "treeSpec": "uniform stockham stages",',
+      '      "leafSizes": [4],',
+      '      "permutationStrategy": "autosort",',
+      '      "twiddleStrategy": "stage_local",',
+      '      "simdStrategy": "neon",',
+      '      "notes": "why this approach avoids the previous failure modes"',
+      '    }',
+      '  ],',
+      '  "audits": [],',
+      '  "results": []',
+      '}',
+    ];
+
+    let laneInstructions;
+    if (lane === 'auditor' || lane === 'auditor_explorer') {
+      laneInstructions = [
+        'Analyze the root causes of previous failures for the missing buckets.',
+        'Classify each failure as permutation, twiddle, stride, normalization, harness defect, or audit false positive.',
+        'Propose structurally different candidates that avoid the identified failure modes.',
+      ];
+    } else if (lane === 'builder' || lane === 'builder_explorer_auditor') {
+      laneInstructions = [
+        'Propose candidates you are confident can compile, validate, and benchmark cleanly.',
+        'Use the failure diagnostics to avoid repeating the same mistakes.',
+        'Prefer simpler decompositions or well-known FFT structures for the failing bucket sizes.',
+      ];
+    } else {
+      laneInstructions = [
+        'Propose structurally different FFT families than what was already tried.',
+        'Vary the tree decomposition, permutation strategy, twiddle approach, or leaf sizes.',
+        'Target candidates that address the specific failure patterns in the diagnostics.',
+      ];
+    }
+
+    return {
+      agentId: participant.agentId,
+      message: [
+        ...commonContext,
+        '',
+        ...jsonShape,
+        '',
+        ...laneInstructions,
+        'You MUST propose candidates for the missing buckets only — do not re-propose for solved buckets.',
+        'Focus exclusively on approaches that differ from previous attempts listed above.',
+      ].join('\n'),
+    };
+  });
+}
+
 function makeProposalId(cycleIndex, proposalIndex, bucketKey) {
   return `cycle${cycleIndex}-${bucketKey}-${proposalIndex}`;
+}
+
+const LEAF_SIZE_VARIANTS = [[2], [4], [8], [4, 8], [4, 16]];
+const TWIDDLE_VARIANTS = ['precompute_table', 'stage_local', 'fused_twiddle_blocks', 'on_the_fly'];
+const PERMUTATION_VARIANTS = ['bit_reverse_postpass', 'autosort', 'recursive_inplace', 'table_lookup'];
+
+export function winnerMutationProposals(state, config, preferredBucketKeys) {
+  const proposals = [];
+  const allowedBuckets = preferredBucketKeys instanceof Set && preferredBucketKeys.size > 0
+    ? preferredBucketKeys
+    : null;
+
+  const winners = state.frontierIds
+    .map((id) => findCandidateById(state, id))
+    .filter(Boolean);
+
+  if (winners.length === 0) return proposals;
+
+  for (const winner of winners) {
+    const targetBuckets = allowedBuckets
+      ? [...allowedBuckets]
+      : config.targetSizes.map((size) => resolveBucketKey(size, config));
+
+    for (const bucketKey of targetBuckets) {
+      const size = parseInt(bucketKey.match(/^n(\d+)/)?.[1] || '64', 10);
+      if (!isPowerOfTwo(size) || !config.targetSizes.includes(size)) continue;
+
+      const source = bucketKey === winner.bucketKey ? 'same-bucket mutation' : 'cross-bucket transfer';
+
+      for (const leafSizes of LEAF_SIZE_VARIANTS) {
+        if (leafSizes.join('-') === (winner.leafSizes || []).join('-')) continue;
+        proposals.push({
+          bucketKey,
+          size,
+          family: winner.family,
+          treeSpec: winner.treeSpec,
+          leafSizes: [...leafSizes],
+          permutationStrategy: winner.permutationStrategy,
+          twiddleStrategy: winner.twiddleStrategy,
+          simdStrategy: winner.simdStrategy,
+          notes: `${source} from ${winner.bucketKey} winner: changed leafSizes to [${leafSizes}]`,
+          proposedByWorkerId: 'plugin_mutation',
+          lane: 'explorer',
+        });
+      }
+
+      for (const twiddle of TWIDDLE_VARIANTS) {
+        if (twiddle === winner.twiddleStrategy) continue;
+        proposals.push({
+          bucketKey,
+          size,
+          family: winner.family,
+          treeSpec: winner.treeSpec,
+          leafSizes: [...(winner.leafSizes || [4, 8])],
+          permutationStrategy: winner.permutationStrategy,
+          twiddleStrategy: twiddle,
+          simdStrategy: winner.simdStrategy,
+          notes: `${source} from ${winner.bucketKey} winner: changed twiddle to ${twiddle}`,
+          proposedByWorkerId: 'plugin_mutation',
+          lane: 'explorer',
+        });
+      }
+
+      for (const perm of PERMUTATION_VARIANTS) {
+        if (perm === winner.permutationStrategy) continue;
+        proposals.push({
+          bucketKey,
+          size,
+          family: winner.family,
+          treeSpec: winner.treeSpec,
+          leafSizes: [...(winner.leafSizes || [4, 8])],
+          permutationStrategy: perm,
+          twiddleStrategy: winner.twiddleStrategy,
+          simdStrategy: winner.simdStrategy,
+          notes: `${source} from ${winner.bucketKey} winner: changed permutation to ${perm}`,
+          proposedByWorkerId: 'plugin_mutation',
+          lane: 'explorer',
+        });
+      }
+    }
+  }
+
+  return proposals;
 }
 
 export function fallbackSeedProposals(config, preferredBucketKeys) {
@@ -734,6 +1016,8 @@ export function buildPendingDecision(ctx, state, config) {
     targets = buildBaselineTargets(ctx, state, config);
   } else if (state.pendingFanOut === 'discovery') {
     targets = buildDiscoveryTargets(ctx, state, config);
+  } else if (state.pendingFanOut === 'reexplore') {
+    targets = buildReexplorationTargets(ctx, state, config);
   } else if (state.pendingFanOut === 'cycle' && state.activePromotedProposals.length > 0) {
     targets = buildCycleTargets(ctx, state, config);
   }
