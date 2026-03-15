@@ -11,13 +11,17 @@ import {
 
 const EXPLICIT_LANE_ROLES = ['explorer', 'builder', 'auditor'];
 
+const MAX_EXTRACT_LEN = 512 * 1024; // 512 KB ceiling for regex + JSON.parse
+
 function extractJson(text) {
-  const raw = safeTrim(text, 40000);
+  const raw = typeof text === 'string' ? text.trim().slice(0, MAX_EXTRACT_LEN) : '';
   if (!raw) return null;
 
   const candidates = [];
-  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch?.[1]) candidates.push(fencedMatch[1].trim());
+  const fencedMatches = raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/ig);
+  for (const match of fencedMatches) {
+    if (match?.[1]) candidates.push(match[1].trim());
+  }
 
   const firstBrace = raw.indexOf('{');
   const lastBrace = raw.lastIndexOf('}');

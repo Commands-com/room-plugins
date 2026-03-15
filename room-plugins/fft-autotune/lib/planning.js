@@ -763,6 +763,85 @@ export function buildAuditTargets(ctx, state, config) {
     }));
 }
 
+export function buildSchemaRepairTargets(ctx, state, config) {
+  const promotedText = JSON.stringify(state.activePromotedProposals, null, 2);
+  const rawBuilderResponses = Array.isArray(state.schemaRepairBuilderResponses)
+    ? state.schemaRepairBuilderResponses
+    : [];
+  const rawResponseText = rawBuilderResponses.length > 0
+    ? rawBuilderResponses.map((entry, index) => [
+        `Builder response ${index + 1} from ${entry.displayName || entry.agentId || 'builder'}:`,
+        '```text',
+        entry.response,
+        '```',
+      ].join('\n')).join('\n\n')
+    : 'No raw builder response was captured.';
+
+  return getLaneParticipantViews(ctx, state)
+    .filter(({ lane }) => lane === 'auditor' || lane === 'auditor_explorer' || lane === 'builder_explorer_auditor')
+    .map(({ participant, lane, laneIndex }) => ({
+      agentId: participant.agentId,
+      message: [
+        `You are the ${lane} role in schema-repair recovery for cycle ${state.cycleIndex}.`,
+        ...buildLanePromptPreamble(participant, lane, laneIndex),
+        '',
+        'The build phase appears to have produced substantive output, but the room could not merge any canonical results from it.',
+        'Your primary task is schema repair: restate the builder output below into the canonical FFT room JSON envelope so the room can salvage the cycle.',
+        '',
+        `Workspace: ${config.workspacePath}`,
+        `Output directory: ${config.outputDir}`,
+        '',
+        'Promoted specs for this cycle:',
+        promotedText,
+        '',
+        'Raw builder response to repair:',
+        rawResponseText,
+        '',
+        'Instructions:',
+        '- Use only explicit facts from the raw builder response plus artifacts you can inspect in the workspace/output directory.',
+        '- Do not invent wins, medians, file paths, compile commands, or validation data that are not supported by the raw response or visible artifacts.',
+        '- If a candidate cannot be reconstructed with credible compile/validation/benchmark evidence, omit it instead of guessing.',
+        '- If you can recover real audit findings from the repaired evidence, include them; otherwise keep audits empty.',
+        '- If the builder output was only a high-level summary with no recoverable evidence, return results: [] and explain why in summary.',
+        '',
+        'Reply with JSON only using this shape:',
+        '{',
+        '  "summary": "what was salvageable from the builder output",',
+        '  "results": [',
+        '    {',
+        '      "proposalId": "cycle3-n64-apple_silicon_neon-1",',
+        '      "bucketKey": "n64-apple_silicon_neon",',
+        '      "family": "stockham_autosort",',
+        '      "treeSpec": "uniform stockham stages",',
+        '      "leafSizes": [4],',
+        '      "permutationStrategy": "autosort",',
+        '      "twiddleStrategy": "stage_local",',
+        '      "simdStrategy": "neon",',
+        '      "compile": { "ok": true, "command": "clang ...", "exitCode": 0, "binaryPath": ".commands/fft-autotune/out.bin", "stderrPath": "" },',
+        '      "validation": { "ok": true, "sampleCount": 64, "maxError": 0.00001, "tolerance": 0.001, "failureReason": "", "validationPath": ".commands/fft-autotune/out.validation.json" },',
+        '      "benchmark": { "ok": true, "warmups": 5, "trials": 30, "medianNs": 123.4, "p95Ns": 130.0, "cvPct": 2.1, "speedupVsBaseline": 1.05, "samplePath": ".commands/fft-autotune/out.bench.json" },',
+        '      "baselineBenchmarks": [ { "bucketKey": "n64-apple_silicon_neon", "medianNs": 138.0, "p95Ns": 142.0, "cvPct": 2.8 } ],',
+        '      "artifactPaths": [".commands/fft-autotune/out.c", ".commands/fft-autotune/out.validation.json", ".commands/fft-autotune/out.bench.json"],',
+        '      "notes": "schema repaired from raw builder output and workspace artifacts"',
+        '    }',
+        '  ],',
+        '  "candidateProposals": [],',
+        '  "audits": [',
+        '    {',
+        '      "proposalId": "cycle3-n64-apple_silicon_neon-1",',
+        '      "openHighConfidenceFindings": 0,',
+        '      "openMediumConfidenceFindings": 1,',
+        '      "retestRequested": false,',
+        '      "notes": "optional audit notes if supported by the evidence"',
+        '    }',
+        '  ]',
+        '}',
+        '',
+        'Use the exact field names shown above. Prefer dropping an unrecoverable candidate to emitting malformed schema.',
+      ].join('\n'),
+    }));
+}
+
 export function buildReexplorationTargets(ctx, state, config) {
   const missingWinnerBuckets = getMissingWinnerBucketKeys(state, config);
   const missingBucketText = JSON.stringify(missingWinnerBuckets, null, 2);
@@ -1135,6 +1214,8 @@ export function buildPendingDecision(ctx, state, config) {
     targets = buildReexplorationTargets(ctx, state, config);
   } else if (state.pendingFanOut === 'audit') {
     targets = buildAuditTargets(ctx, state, config);
+  } else if (state.pendingFanOut === 'schema_repair') {
+    targets = buildSchemaRepairTargets(ctx, state, config);
   } else if (state.pendingFanOut === 'cycle' && state.activePromotedProposals.length > 0) {
     targets = buildCycleTargets(ctx, state, config);
   }

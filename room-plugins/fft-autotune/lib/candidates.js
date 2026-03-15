@@ -184,11 +184,14 @@ function applyAuditRecordToCandidate(candidate, audit, promotedProposal) {
   });
 }
 
-export function mergeCycleArtifacts(state, responses, config) {
+export function mergeCycleArtifacts(state, responses, config, options = {}) {
   const auditsByProposalId = new Map();
   const results = [];
   const proposals = [];
   const discoveryNotes = [];
+  const acceptedResultLanes = options.acceptResultLanes instanceof Set
+    ? options.acceptResultLanes
+    : BUILDER_CAPABLE_LANES;
 
   for (const response of responses) {
     const worker = {
@@ -204,7 +207,7 @@ export function mergeCycleArtifacts(state, responses, config) {
     proposals.push(...envelope.candidateProposals);
 
     // Issue 1: Only accept results from builder-capable lanes
-    if (BUILDER_CAPABLE_LANES.has(worker.assignedLane)) {
+    if (acceptedResultLanes.has(worker.assignedLane)) {
       // Issue 0: Verify artifact paths exist before accepting results
       for (const result of envelope.results) {
         if (verifyResultArtifacts(result, config)) {

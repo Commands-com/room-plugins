@@ -306,6 +306,66 @@ describe('parseWorkerEnvelope — alternate field names', () => {
     const envelope = parseWorkerEnvelope(response, worker, config);
     expect(envelope.results[0].bucketKey).toBe('n256-apple_silicon_neon');
   });
+
+  it('parses long fenced JSON builder responses without truncating the results payload', () => {
+    const response = `All 6 validation+benchmark runs passed. Here is the complete JSON result:\n\n\`\`\`json\n${JSON.stringify({
+      summary: 'large baseline payload',
+      results: [{
+        proposalId: 'baseline-n64-1',
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'baseline_reference',
+        isBaseline: true,
+        treeSpec: 'Split(64, 8, 8)',
+        leafSizes: [8],
+        permutationStrategy: 'fused_stride_read',
+        twiddleStrategy: 'precomputed_static_const',
+        simdStrategy: 'scalar',
+        compile: {
+          ok: true,
+          command: 'clang -O3 -ffast-math -march=native -DDFT_SIZE=64 -DDFT_FUNC=dft_64 baseline_n64.c harness.c -o baseline_n64.bin -lm',
+          exitCode: 0,
+          binaryPath: '.commands/fft-autotune/baseline_n64.bin',
+          stderrPath: '',
+        },
+        validation: {
+          ok: true,
+          sampleCount: 64,
+          maxError: 9.23059815e-06,
+          tolerance: 0.001,
+          failureReason: '',
+          validationPath: '.commands/fft-autotune/baseline_n64.validation.json',
+        },
+        benchmark: {
+          ok: true,
+          warmups: 5,
+          trials: 30,
+          medianNs: 54.167419,
+          p95Ns: 67.156494,
+          cvPct: 11.012857,
+          samplePath: '.commands/fft-autotune/baseline_n64.bench.json',
+        },
+        baselineBenchmarks: [{
+          bucketKey: 'n64-apple_silicon_neon',
+          medianNs: 54.167419,
+          p95Ns: 67.156494,
+          cvPct: 11.012857,
+        }],
+        artifactPaths: [
+          '.commands/fft-autotune/baseline_n64.c',
+          '.commands/fft-autotune/baseline_n64.bin',
+          '.commands/fft-autotune/baseline_n64.validation.json',
+          '.commands/fft-autotune/baseline_n64.bench.json',
+        ],
+        notes: `fresh same-run baseline ${'x'.repeat(45000)}`,
+      }],
+    })}\n\`\`\``;
+
+    const envelope = parseWorkerEnvelope(response, worker, config);
+    expect(envelope.results).toHaveLength(1);
+    expect(envelope.results[0].proposalId).toBe('baseline-n64-1');
+    expect(envelope.results[0].benchmark.medianNs).toBeCloseTo(54.167419);
+    expect(envelope.results[0].artifactPaths).toContain('.commands/fft-autotune/baseline_n64.bench.json');
+  });
 });
 
 describe('mergeCycleArtifacts baseline recovery', () => {
@@ -394,6 +454,72 @@ describe('mergeCycleArtifacts baseline recovery', () => {
     expect(state.baselines['n1024-apple_silicon_neon']?.medianNs).toBeCloseTo(1517);
     expect(candidate?.bucketKey).toBe('n1024-apple_silicon_neon');
     expect(candidate?.benchmark.speedupVsBaseline).toBeCloseTo(1517 / 1400);
+  });
+
+  it('accepts canonical repaired results from the auditor lane during schema repair', () => {
+    const state = createInitialState(makeMockCtx());
+    state.cycleIndex = 3;
+    state.lanesByAgentId = { auditor_1: 'auditor' };
+    state.baselines = {
+      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 1200 },
+    };
+    state.activePromotedProposals = [{
+      proposalId: 'cycle3-n64-1',
+      bucketKey: 'n64-apple_silicon_neon',
+      size: 64,
+      family: 'stockham_autosort',
+      treeSpec: 'stockham radix-4',
+      leafSizes: [4],
+      permutationStrategy: 'autosort',
+      twiddleStrategy: 'stage_local',
+      simdStrategy: 'neon',
+      proposedByWorkerId: 'explorer_1',
+      lane: 'explorer',
+      notes: '',
+    }];
+
+    const config = makeConfig({
+      workspacePath: '',
+      outputDir: '',
+    });
+
+    const responses = [{
+      agentId: 'auditor_1',
+      response: JSON.stringify({
+        summary: 'schema repaired builder output',
+        results: [{
+          proposalId: 'cycle3-n64-1',
+          bucketKey: 'n64-apple_silicon_neon',
+          family: 'stockham_autosort',
+          treeSpec: 'stockham radix-4',
+          leafSizes: [4],
+          permutationStrategy: 'autosort',
+          twiddleStrategy: 'stage_local',
+          simdStrategy: 'neon',
+          compile: { ok: true, command: 'clang', exitCode: 0, binaryPath: '.commands/fft-autotune/out.bin', stderrPath: '' },
+          validation: { ok: true, sampleCount: 64, maxError: 0.0001, tolerance: 0.001, failureReason: '', validationPath: '.commands/fft-autotune/out.validation.json' },
+          benchmark: { ok: true, warmups: 5, trials: 30, medianNs: 900, p95Ns: 930, cvPct: 2.0, samplePath: '.commands/fft-autotune/out.bench.json' },
+          baselineBenchmarks: [{ bucketKey: 'n64-apple_silicon_neon', medianNs: 1200, p95Ns: 1250, cvPct: 2.2 }],
+          artifactPaths: ['.commands/fft-autotune/out.c', '.commands/fft-autotune/out.validation.json', '.commands/fft-autotune/out.bench.json'],
+          notes: 'recovered from malformed builder summary',
+        }],
+        audits: [{
+          proposalId: 'cycle3-n64-1',
+          openHighConfidenceFindings: 0,
+          openMediumConfidenceFindings: 1,
+          retestRequested: false,
+          notes: 'schema repair audit note',
+        }],
+        candidateProposals: [],
+      }),
+    }];
+
+    mergeCycleArtifacts(state, responses, config, { acceptResultLanes: new Set(['auditor']) });
+
+    expect(state.candidates).toHaveLength(1);
+    expect(state.candidates[0].proposalId).toBe('cycle3-n64-1');
+    expect(state.candidates[0].implementedByWorkerId).toBe('auditor_1');
+    expect(state.candidates[0].audit.openMediumConfidenceFindings).toBe(1);
   });
 });
 
@@ -1320,6 +1446,68 @@ describe('plugin onRoomStart', () => {
 // ---------------------------------------------------------------------------
 
 describe('plugin onFanOutComplete — convergence paths', () => {
+  it('routes to schema-repair audit when build output had substance but merged no candidates', () => {
+    const plugin = createPlugin();
+    const ctx = makeMockCtx();
+    plugin.init(ctx);
+
+    const state = ctx.getState();
+    state.pendingFanOut = 'cycle';
+    state.cycleIndex = 3;
+    state.phase = PHASES.BENCHMARK;
+    state.proposalBacklog = [];
+    state.baselines = makeAllBaselines();
+    state.activePromotedProposals = [{
+      proposalId: 'cycle3-n64-1',
+      bucketKey: 'n64-apple_silicon_neon',
+      size: 64,
+      family: 'stockham_autosort',
+      treeSpec: 'stockham radix-4',
+      leafSizes: [4],
+      permutationStrategy: 'autosort',
+      twiddleStrategy: 'stage_local',
+      simdStrategy: 'neon',
+      proposedByWorkerId: 'explorer_1',
+      lane: 'explorer',
+      notes: '',
+    }];
+    ctx.setState(state);
+
+    const responses = [
+      {
+        agentId: 'builder_1',
+        response: JSON.stringify({
+          cycle: 3,
+          buckets: {
+            'N=64': {
+              candidates: [
+                {
+                  proposal: 1,
+                  family: 'stockham_autosort',
+                  file: 'stockham_n64.c',
+                  validation: { ok: true, maxError: 0.00001 },
+                  bench: { ok: true, medianNs: 43.79, p95Ns: 58.04, cvPct: 13.71 },
+                },
+              ],
+            },
+          },
+          diagnostics: { key_insight: 'summary-only malformed builder envelope' },
+        }),
+      },
+      { agentId: 'auditor_1', response: '{"summary":"empty","results":[],"candidateProposals":[],"audits":[]}' },
+      { agentId: 'explorer_1', response: '{"summary":"empty","results":[],"candidateProposals":[],"audits":[]}' },
+    ];
+
+    const decision = plugin.onFanOutComplete(ctx, responses);
+    const updatedState = ctx.getState();
+
+    expect(decision.type).toBe('fan_out');
+    expect(updatedState.pendingFanOut).toBe('schema_repair');
+    expect(updatedState.phase).toBe(PHASES.STATIC_AUDIT);
+    expect(updatedState.schemaRepairBuilderResponses).toHaveLength(1);
+    expect(updatedState.schemaRepairBuilderResponses[0].response).toContain('"buckets"');
+  });
+
   it('stops with convergence when plateau reached and all buckets won', () => {
     const plugin = createPlugin();
     const ctx = makeMockCtx({

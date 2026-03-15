@@ -77,6 +77,7 @@ export function createInitialState(ctx) {
     frontierIds: [],
     bestByBucket: {},
     pendingFanOut: null,
+    schemaRepairBuilderResponses: [],
     plateauCount: 0,
     bestImprovementPct: 0,
     degradedDiversity: false,

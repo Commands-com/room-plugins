@@ -7,6 +7,40 @@ import { createInitialState, derivePartialPhase, advancePhase, setPhase } from '
 import { fallbackSeedProposals, winnerMutationProposals, enqueueProposals, selectActivePromotedProposals, buildPendingDecision } from './planning.js';
 import { emitStateMetrics } from './report.js';
 
+const MAX_REPAIR_RESPONSE_LEN = 512 * 1024;
+const BUILDER_RESPONSE_LANES = new Set(['builder', 'builder_explorer_auditor']);
+const SCHEMA_REPAIR_RESULT_LANES = new Set(['builder', 'builder_explorer_auditor', 'auditor', 'auditor_explorer']);
+const SCHEMA_REPAIR_SIGNAL_PATTERNS = [
+  /"proposalId"\s*:/,
+  /"bucketKey"\s*:/,
+  /"compile"\s*:/,
+  /"validation"\s*:/,
+  /"benchmark"\s*:/,
+  /"buckets"\s*:/,
+  /"bench"\s*:/,
+  /"winner_unchanged"\s*:/,
+  /"file"\s*:/,
+  /"medianNs"\s*:/,
+];
+
+function collectSchemaRepairBuilderResponses(state, ctx, responses) {
+  return (Array.isArray(responses) ? responses : [])
+    .filter((response) => BUILDER_RESPONSE_LANES.has(state.lanesByAgentId[response.agentId] || 'worker'))
+    .map((response) => {
+      const participant = (ctx.participants || []).find((item) => item.agentId === response.agentId);
+      const raw = typeof response.response === 'string' ? response.response : '';
+      return {
+        agentId: response.agentId,
+        displayName: participant?.displayName || response.agentId,
+        response: raw.length > MAX_REPAIR_RESPONSE_LEN ? raw.slice(0, MAX_REPAIR_RESPONSE_LEN) : raw,
+      };
+    })
+    .filter((entry) => {
+      const text = entry.response.trim();
+      return text.length > 0 && SCHEMA_REPAIR_SIGNAL_PATTERNS.some((pattern) => pattern.test(text));
+    });
+}
+
 function finishSearchCycle(ctx, state, config) {
   recomputeFrontier(state, config);
   updateDiversity(state);
@@ -200,8 +234,19 @@ export function createPlugin() {
       const builtNewCandidates = state.candidates.length > candidateCountBefore;
 
       if (builtNewCandidates) {
+        state.schemaRepairBuilderResponses = [];
         setPhase(state, PHASES.STATIC_AUDIT);
         state.pendingFanOut = 'audit';
+        ctx.setState(state);
+        emitStateMetrics(ctx, state);
+        return buildPendingDecision(ctx, state, config);
+      }
+
+      const schemaRepairBuilderResponses = collectSchemaRepairBuilderResponses(state, ctx, responses);
+      if (schemaRepairBuilderResponses.length > 0) {
+        state.schemaRepairBuilderResponses = schemaRepairBuilderResponses;
+        setPhase(state, PHASES.STATIC_AUDIT);
+        state.pendingFanOut = 'schema_repair';
         ctx.setState(state);
         emitStateMetrics(ctx, state);
         return buildPendingDecision(ctx, state, config);
@@ -212,6 +257,16 @@ export function createPlugin() {
 
     if (state.pendingFanOut === 'audit') {
       const { proposals } = mergeCycleArtifacts(state, responses, config);
+      state.schemaRepairBuilderResponses = [];
+      enqueueProposals(state, proposals, config);
+      return finishSearchCycle(ctx, state, config);
+    }
+
+    if (state.pendingFanOut === 'schema_repair') {
+      const { proposals } = mergeCycleArtifacts(state, responses, config, {
+        acceptResultLanes: SCHEMA_REPAIR_RESULT_LANES,
+      });
+      state.schemaRepairBuilderResponses = [];
       enqueueProposals(state, proposals, config);
       return finishSearchCycle(ctx, state, config);
     }
