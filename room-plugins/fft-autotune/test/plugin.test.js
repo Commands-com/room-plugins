@@ -13,6 +13,8 @@ import {
   winnerMutationProposals,
   buildTriedCandidatesSummary,
   buildReexplorationTargets,
+  buildBaselineTargets,
+  buildCycleTargets,
   buildPlanningTargets,
   buildPendingDecision,
 } from '../lib/planning.js';
@@ -885,6 +887,37 @@ describe('buildPlanningTargets', () => {
     expect(explorerMessage).toContain('This is the first planning cycle after fresh baselines. Be exploit-first, not novelty-first.');
     expect(explorerMessage).toContain('At most one proposal per bucket may be a broad wildcard family.');
     expect(explorerMessage).toContain('Do not spend n64 slots on transpose-heavy matrix families');
+  });
+});
+
+describe('builder prompt evidence paths', () => {
+  it('requires baseline and build evidence files to stay in the FFT output directory', () => {
+    const ctx = makeMockCtx({ roomConfig: { targetSizes: [64] } });
+    const config = makeConfig({ targetSizes: [64] });
+    const state = createInitialState(ctx);
+    state.lanesByAgentId = { explorer_1: 'explorer', builder_1: 'builder', auditor_1: 'auditor' };
+    state.workersByLane = { explorer: ['explorer_1'], builder: ['builder_1'], auditor: ['auditor_1'] };
+    state.cycleIndex = 1;
+    state.activePromotedProposals = [
+      {
+        ...makeProposal('n64-apple_silicon_neon', 'cooley_tukey_shallow'),
+        proposalId: 'cycle1-n64-1',
+      },
+    ];
+
+    const baselineMessage = buildBaselineTargets(ctx, state, config)
+      .find((target) => target.agentId === 'builder_1')?.message || '';
+    const cycleMessage = buildCycleTargets(ctx, state, config)
+      .find((target) => target.agentId === 'builder_1')?.message || '';
+
+    expect(baselineMessage).toContain('Do NOT write validation/benchmark evidence to /tmp');
+    expect(baselineMessage).toContain('Every reported binaryPath, validationPath, samplePath, and artifactPaths entry must resolve inside the workspace/output directory');
+    expect(baselineMessage).toContain('Do NOT invent alternate top-level keys like "candidates", "findings", or "proposals" here.');
+    expect(baselineMessage).toContain('Do NOT substitute alternate result keys like id, label, bucket, file, compileFlags, or a nested summary-only format.');
+    expect(cycleMessage).toContain('Do NOT write validation/benchmark evidence to /tmp');
+    expect(cycleMessage).toContain('Every reported binaryPath, validationPath, samplePath, and artifactPaths entry must resolve inside the workspace/output directory');
+    expect(cycleMessage).toContain('Do NOT invent alternate top-level keys like "candidates", "findings", or "proposals" here.');
+    expect(cycleMessage).toContain('Do NOT substitute alternate result keys like id, label, bucket, file, compileFlags, or a nested summary-only format.');
   });
 });
 

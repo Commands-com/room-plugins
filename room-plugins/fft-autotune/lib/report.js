@@ -320,6 +320,8 @@ function buildBlockedBucketRows(state, config) {
 
 function buildCandidateRows(state, config) {
   const candidateRows = sortCandidatesForFrontier(state.candidates.filter((candidate) =>
+    candidate.family !== 'ne10_neon_reference'
+    &&
     candidate.compile.ok
     && candidate.validation.ok
     && candidate.benchmark.ok
