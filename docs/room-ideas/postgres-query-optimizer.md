@@ -21,7 +21,8 @@ to the proven fft-autotune pattern:
 
 The validation story has two parts with very different confidence levels:
 
-- **Result parity** (for rewrites) is a hard correctness gate — zero ambiguity.
+- **Result parity** (for rewrites) is a hard correctness gate — see Section 9.3
+  for edge cases and known v1 limitations.
 - **EXPLAIN ANALYZE timing** is NOT deterministic the way FFT cycle-counting is.
   Even in Docker with pinned GUCs, execution times vary by 10-30% across runs due
   to OS scheduling, buffer cache state, and background Postgres processes. The room
@@ -42,7 +43,7 @@ toy data, and shared instances have unpredictable cache/load.
 
 ```
 preflight
-  docker run postgres:16-alpine (pinned GUCs for benchmarking)
+  docker run postgres:${postgresVersion}-alpine (pinned GUCs for benchmarking)
     load schema (DDL dump, migrations dir, or live introspection)
     populate data (user seed, sampled from source, or naive synthetic fallback)
     CHECKPOINT
@@ -97,6 +98,61 @@ The `introspect` path is the lowest-friction option: user provides their existin
 connection string, the harness pulls schema metadata (no data), and spins up an
 isolated copy. The source database is never modified.
 
+**`pg_dump` dependency**: The `pg_dump` command for `introspect` mode is
+executed on the host/plugin side, **not** inside the harness container. The
+plugin runs `pg_dump --schema-only` against the source `dbUrl` from the host
+environment, captures the DDL output, and pipes it into the isolated harness
+container via `docker exec -i <container> psql -f -`. This keeps the harness
+container fully network-isolated at all times (see Section 9.1).
+
+If `pg_dump` is not available on the host (e.g., lightweight CI or Node.js
+Docker environments), the plugin falls back to running `pg_dump` inside a
+**separate ephemeral utility container**:
+```
+docker run --rm --add-host=host.docker.internal:host-gateway \
+  postgres:${postgresVersion}-alpine \
+  pg_dump --schema-only -h <source_host> ...
+```
+The utility container has network access but is discarded immediately after
+capturing the schema output. The harness container itself never needs
+external network access.
+
+**`localhost` URL handling**: When the user's `dbUrl` points at `localhost`
+or `127.0.0.1`, the plugin rewrites the hostname to `host.docker.internal`
+before passing it to the utility container (since `localhost` inside a
+container refers to the container itself, not the host machine). The
+`--add-host=host.docker.internal:host-gateway` flag ensures this resolves
+correctly on Linux; on macOS/Windows Docker Desktop, `host.docker.internal`
+is available by default. If hostname rewriting fails (e.g., non-standard
+Docker setups), PREFLIGHT fails with an error asking the user to either
+install `pg_dump` on the host or provide a non-localhost `dbUrl`.
+
+**Version compatibility**: The `postgresVersion` config (default `16`) is
+used for both the harness container and any utility containers.
+
+When using `schemaSource = 'introspect'`, the plugin detects the source
+database's major version during PREFLIGHT (via `SHOW server_version`) and
+applies the following logic:
+- **Auto-match (default behavior)**: If the user has not explicitly set
+  `postgresVersion`, the plugin overrides the default and uses the detected
+  source major version instead. This ensures planner behavior in the harness
+  matches production.
+- **Explicit mismatch warning**: If the user explicitly sets
+  `postgresVersion` to a value different from the detected source version
+  (higher or lower), the plugin warns: "Harness is Postgres {X} but source
+  is Postgres {Y} — query planner behavior may differ." The room proceeds
+  but the final report includes a prominent note: "⚠ Benchmarked on
+  Postgres {X}; production runs Postgres {Y}. Plan choices and timing may
+  not transfer exactly."
+- **`pg_dump` floor**: Regardless of the above, `pg_dump` version must be
+  >= the source major version. If the resolved `postgresVersion` is lower
+  than the source (only possible with an explicit user override), PREFLIGHT
+  fails with an error explaining that `pg_dump` {X} cannot dump a Postgres
+  {Y} source.
+
+For `schemaSource = 'dump'` or `'migrations'` (no source DB to detect),
+`postgresVersion` is used as-is with no compatibility check.
+
 ### 1.4 Data Population
 
 Data population is required for benchmarks to mean anything, but realistic
@@ -105,8 +161,60 @@ problem in this room. Getting distributions wrong means the planner makes
 different choices than it would in production, which means the room optimizes
 for the wrong thing.
 
-**v1 strategy: don't try to be clever.** Support three tiers, in order of
+**v1 strategy: don't try to be clever.** Support four tiers, in order of
 reliability:
+
+**Tier 0 — Demo mode (zero setup)**:
+If the user sets `demoMode: true`, the room uses a bundled sample scenario:
+schema, data, and a known-slow query that ship with the plugin under
+`assets/demo/`. One click, no database needed — just Docker.
+
+Demo mode overrides only the data/schema/query inputs (`schemaSource`,
+`schemaPath`, `dbUrl`, `slowQuery`, `seedDataPath`, `seedFromSource`,
+`schemaFilter`). Everything else still works normally — `outputDir`,
+`postgresVersion`, `scaleFactor`, and all orchestrator tuning knobs
+(`plannedCandidatesPerCycle`, `benchmarkTrials`, etc.) are honored as
+configured. This lets users experiment with the tuning knobs against a
+known scenario before pointing the room at their own database.
+
+The demo scenario should be:
+- **Schema**: a small e-commerce model — `users`, `orders`, `order_items`,
+  `products`, `categories`. 5-6 tables with realistic FK relationships,
+  a few existing indexes on PKs only.
+- **Data**: bundled as a `pg_dump --data-only` compressed file (~5-10MB).
+  ~500K orders, ~50K users, ~2M order_items. Zipfian user-to-order
+  distribution, time-series `created_at`, weighted `status` enum.
+  Pre-generated and committed to the repo — no runtime generation.
+- **Slow query**: a multi-join analytics query that's genuinely slow
+  without indexes, e.g.:
+  ```sql
+  SELECT u.email, COUNT(o.id) AS order_count, SUM(oi.quantity * oi.unit_price) AS total_spent
+  FROM users u
+  JOIN orders o ON o.user_id = u.id
+  JOIN order_items oi ON oi.order_id = o.id
+  WHERE o.created_at > '2025-01-01'
+    AND o.status = 'completed'
+  GROUP BY u.email
+  ORDER BY total_spent DESC
+  LIMIT 50;
+  ```
+- **Expected outcome**: the room should find a composite index on
+  `orders(user_id, created_at, status)` or similar, achieving >10x
+  speedup. This validates the full pipeline end-to-end.
+
+Demo mode serves three purposes:
+1. **First-run experience** — users can see the room work before
+   configuring their own database. Reduces time-to-value from "set up
+   Docker + provide connection string + provide seed data" to "click start."
+2. **Development and testing** — plugin developers can run the full cycle
+   without an external database. CI can validate the pipeline end-to-end.
+3. **Sales/showcase** — demonstrates the room's value with a concrete,
+   reproducible result.
+
+The demo data is Tier 1 quality (pre-generated with realistic distributions)
+so the room's full benchmark pipeline works correctly — it's not a
+simplified codepath. The only difference is that the schema, data, and
+query are bundled instead of user-provided.
 
 **Tier 1 — User-provided seed (most reliable)**:
 If the user provides `seedDataPath`, load it directly. This is the
@@ -114,18 +222,108 @@ recommended path for serious use. A `pg_dump --data-only` from a staging
 database, or a hand-written seed script, gives realistic distributions
 without the room having to guess.
 
-**Tier 2 — Sampled from source (reliable, requires access)**:
+**Tier 2 — Sampled from source (requires access, caveats apply)**:
 If the user provides `seedFromSource: true` plus a live `dbUrl`, sample
-real rows with configurable limits per table:
+real rows from the source database and insert them into the pre-loaded
+schema in the harness container.
+
+**Reliability scope**: Tier 2 preserves per-column value distributions
+(skew, cardinality, NULLs) which makes it reliable for **single-table
+access path decisions** — the planner will see realistic selectivity
+estimates and choose index scans vs seq scans correctly. However, Tier 2
+samples each table independently, which **breaks cross-table relationship
+structure**. Child rows may reference parent IDs that weren't sampled,
+and join cardinality estimates can diverge significantly from production.
+This means Tier 2 is **less reliable for multi-join rewrite strategies**
+where the planner's join order decisions depend on accurate cross-table
+cardinality estimates.
+
+For multi-join optimization, Tier 1 (a real data dump from staging) is
+strongly preferred. The report flags when Tier 2 was used with a
+multi-join query and advises verifying rewrite candidates against
+production-representative data before deploying.
+
+**Mechanism**: The plugin uses `COPY (SELECT ... TABLESAMPLE ... LIMIT ...)
+TO STDOUT` to stream sampled rows from the source database, then pipes them
+into the harness container via `psql \copy ... FROM STDIN`. This avoids
+cross-database query issues (plain Postgres cannot query across databases
+without FDW/dblink). Note: `pg_dump` does not support per-table row limits,
+so `COPY` with a subquery is the correct streaming approach.
+
+**Sampling strategy**: The plugin uses a two-path approach per table to
+honor the `scaleFactor` semantics:
+
+1. **Estimate table cardinality** via a read-only stats lookup:
+   ```sql
+   SELECT reltuples FROM pg_class
+   WHERE relname = '{table}'
+     AND relnamespace = '{schema}'::regnamespace;
+   ```
+   This filters by schema to avoid ambiguity when multiple schemas contain
+   tables with the same name. If `reltuples` is `0` or `-1` (table has never
+   been analyzed or stats are stale), the plugin does **not** run `ANALYZE`
+   on the source — that would be a write to the source database, which
+   violates the read-only promise and may require unexpected privileges.
+   Instead, the plugin falls back to a counting query with a timeout:
+   ```sql
+   SELECT count(*) FROM {schema}.{table};  -- with statement_timeout = '5s'
+   ```
+   If the count times out (table is very large), the plugin assumes the
+   table exceeds `scaleFactor` and proceeds with `TABLESAMPLE`. If the
+   count succeeds, it uses the exact count. If both stats and count fail
+   (e.g., truly empty table or permission issue), the plugin defaults to
+   a full copy attempt.
+2. **If estimated rows <= `scaleFactor`**: full copy — `COPY (SELECT * FROM
+   {schema}.{table}) TO STDOUT`. Small tables are copied entirely to preserve
+   realistic distributions and FK relationships.
+3. **If estimated rows > `scaleFactor`**: sampled copy using Postgres' native
+   `TABLESAMPLE` for efficiency:
+   ```sql
+   COPY (SELECT * FROM {table} TABLESAMPLE BERNOULLI ({pct})
+         LIMIT {scaleFactor}) TO STDOUT;
+   ```
+   The `{pct}` is calculated as `min(100, scaleFactor / reltuples * 120)` —
+   oversampling by ~20% to account for BERNOULLI's statistical variance,
+   with the `LIMIT` providing an exact cap. If the sample undershoots
+   (returns fewer rows than `scaleFactor`), the plugin retries once with a
+   doubled percentage before accepting the result.
+4. **Load into harness**: `\copy {table} FROM STDIN` (piped from step 2 or 3).
+
+Avoid `ORDER BY random() LIMIT N` as it requires a full table scan and
+sort on the source database, which can cause significant CPU/memory
+pressure on large production tables.
+
+**Foreign key consistency**: Independent random sampling across tables
+will produce FK violations when child rows reference parent IDs not in
+the sample. The harness handles this by disabling FK checks during the
+data load phase:
 ```sql
--- for each table:
-CREATE TABLE harness.{table} AS
-  SELECT * FROM source.{table}
-  ORDER BY random()
-  LIMIT {scaleFactor};
+SET session_replication_role = 'replica';
+-- load all sampled data...
+SET session_replication_role = 'DEFAULT';
 ```
-This preserves real distributions but limits volume. Requires the source
-DB to be accessible from the harness environment.
+This is acceptable for index-path benchmarking (single-table access
+decisions), but **materially affects join cardinality estimates**. When
+sampled child rows reference unsampled parent IDs, joins produce fewer
+matches than production, which can cause the planner to choose different
+join strategies (e.g., picking a hash join over a nested loop because the
+estimated result set is smaller). The report flags this clearly when
+Tier 2 is used with multi-table queries — see the reliability scope
+note above.
+
+**`scaleFactor` semantics for Tier 2**: The `scaleFactor` value is used
+as a per-table row LIMIT. Small tables (fewer rows than `scaleFactor`)
+get all their rows; large tables are capped. Tier 1 ignores
+`scaleFactor` (seed data is what it is). Tier 3 uses it as a per-table
+generation target.
+
+**Required permissions**: The source `dbUrl` must have `SELECT` access
+on the sampled tables/columns. Since the mechanism uses
+`COPY (SELECT ...) TO STDOUT` (a query-based copy, not server-side file
+access), no additional roles beyond normal `SELECT` privileges are needed.
+Optionally, `pg_read_all_data` or equivalent can be granted for convenience
+when blanket read access across all tables is desired. The source database
+is never modified.
 
 **Tier 3 — Naive synthetic (v1 fallback)**:
 If no seed and no source access, generate data using `generate_series` with
@@ -153,15 +351,31 @@ paths first, and warn loudly when falling back to naive generation.
 
 ### 1.5 Snapshot and Restore
 
-Between candidates, the harness must restore to a clean state efficiently:
+Between candidates, the harness must restore to a clean state efficiently.
 
-- **Option A** (fast, preferred): filesystem-level snapshot of the Postgres data
-  directory. `docker cp` or volume snapshot, then restart.
+**v1 restore strategies** (in order of preference):
+
+- **Option A** (fast, preferred): Stop the Postgres server inside the container,
+  take a filesystem-level snapshot of PGDATA (via `docker cp` of the stopped
+  data directory, or `docker commit`), then restart. **Critical**: the server
+  must be stopped cleanly (`pg_ctl stop -m fast`) before copying PGDATA —
+  snapshotting a live data directory risks corruption. Alternatively, use
+  `pg_basebackup` while the server is running.
 - **Option B** (portable): `pg_dump` after data load, `pg_restore` between
-  candidates. Slower but works on all Docker setups.
-- **Option C** (lightweight): for index-only candidates, just `DROP INDEX` and
+  candidates. Slower but works on all Docker setups and is always safe.
+- **Option C** (lightweight): for index-only candidates, `DROP INDEX` and
   `ANALYZE` instead of full restore. Since v1 only supports index and rewrite
   strategies, and rewrites don't modify schema, this covers most cases.
+
+**Cache-state policy**: To ensure fair comparison between candidates, the
+harness applies a consistent cache policy:
+- After restore (Options A/B) or rollback (Option C), run
+  `SELECT pg_stat_reset();` and `DISCARD ALL;` to reset session state.
+- Execute the standard warmup runs (configured via `warmupRuns`) before
+  measurement to bring buffer cache to a consistent state.
+- Re-run the baseline measurement every N cycles (default: every 2 cycles)
+  to detect drift from buffer cache warming or other environmental changes.
+  If baseline drift exceeds 15%, flag measurements as potentially biased.
 
 The plugin tracks what each candidate changed so it can choose the lightest
 restore strategy. In v1, Option C is the common path — full restore is only
@@ -183,7 +397,16 @@ Extract from each trial:
 - `Execution Time` (ms)
 - `Planning Time` (ms)
 - `Shared Hit Blocks`, `Shared Read Blocks` (buffer IO)
-- Top-level node type (Seq Scan, Index Scan, Hash Join, etc.)
+- **Full plan node tree** — extract the set of all node types in the execution
+  plan (not just the top-level node, which is often a generic `Limit`, `Sort`,
+  or `Aggregate` that stays constant even when underlying access changes
+  dramatically). Specifically extract:
+  - `planNodeSet`: set of all node types in the plan tree
+  - `leafAccessNodes`: leaf-level access nodes (`Seq Scan`, `Index Scan`,
+    `Index Only Scan`, `Bitmap Heap Scan`, etc.) — these are the primary
+    signal for plan shape changes
+  - `planStructureHash`: a hash of the full plan tree structure for quick
+    comparison
 - Total rows processed
 
 Compute:
@@ -191,19 +414,36 @@ Compute:
 - p95 execution time
 - CV% (coefficient of variation) — if >20%, flag measurement as unstable
 - Speedup vs baseline: `(baseline_median - candidate_median) / baseline_median * 100`
-- **Plan shape change** (primary signal): did the planner switch node types?
-  e.g., Seq Scan → Index Scan, Hash Join → Nested Loop. This is more reliable
-  than timing for marginal improvements.
+- **Plan shape change** (primary signal): did the planner change its strategy?
+  `planShapeChanged` is determined by comparing multiple plan features, with
+  strategy-specific logic:
+  - **For `index` candidates**: compare `leafAccessNodes` (e.g., Seq Scan →
+    Index Scan). Access-path changes are the primary signal since indexes
+    affect scan methods.
+  - **For `rewrite` candidates**: compare `planNodeSet` or `planStructureHash`,
+    which capture changes to join strategies (Hash Join → Nested Loop),
+    aggregation methods, and intermediate nodes — not just leaf scans. A
+    rewrite that changes the join strategy while leaving leaf scans unchanged
+    is still a material plan shape change.
+  - In both cases, comparing only the top-level node is insufficient — a plan
+    can change from `Seq Scan` to `Index Scan` under a `Sort` node while the
+    top-level node remains `Sort`.
 
 **Noise handling**: EXPLAIN ANALYZE timing is inherently noisy (10-30% variance
-even in Docker). The room treats plan shape as the primary ranking signal and
-timing as confirmation. Specifically:
-- A plan shape change + >2x speedup = high confidence, promote immediately
-- A plan shape change + <2x speedup = medium confidence, retest once
-- No plan shape change + any speedup = low confidence, likely noise unless
-  the improvement is >5x (which can happen with better join order on same
-  node types)
+even in Docker). Plan shape change is used as a **confidence signal for
+measurement quality**, not as a ranking tiebreaker:
+- A plan shape change + >2x speedup = high confidence, accept measurement
+- A plan shape change + <2x speedup = medium confidence, retest once to confirm
+- No plan shape change + >5x speedup = accept (real wins from better join order
+  or parameter estimation can happen within the same node types)
+- No plan shape change + <5x speedup = low confidence, retest once — if the
+  retest confirms the improvement (within 20% of original measurement), accept;
+  otherwise discard as noise
 - CV% > 20% on any measurement = discard and retest with more trials
+
+Plan shape is not used in frontier ranking. The ranking sorts by speedup,
+stability, risk, and cost. Plan shape determines whether we trust the
+speedup number enough to rank it at all.
 
 ---
 
@@ -240,8 +480,9 @@ pipeline.
     {
       "proposalId": "idx_orders_user_created",
       "strategyType": "index",
-      "applySQL": "CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders(user_id, created_at);",
+      "applySQL": "CREATE INDEX idx_orders_user_created ON orders(user_id, created_at);",
       "rollbackSQL": "DROP INDEX IF EXISTS idx_orders_user_created;",
+      "deploySQL": "CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders(user_id, created_at);",
       "targetQuery": null,
       "notes": "Covers the WHERE + ORDER BY pattern",
       "expectedImpact": "high"
@@ -249,6 +490,13 @@ pipeline.
   ]
 }
 ```
+
+**`applySQL` vs `deploySQL`**: `applySQL` is used inside the isolated Docker
+harness for benchmarking — it uses plain `CREATE INDEX` (faster, transactional,
+no concurrent workload to protect). `deploySQL` is the production-safe version
+that uses `CREATE INDEX CONCURRENTLY` and is included in the final report.
+The auditor flags any `deploySQL` that is missing `CONCURRENTLY` on tables
+expected to have concurrent writes.
 
 **Cycle feedback**: after cycle 1+, the explorer receives:
 - Prior candidates with their measured speedup
@@ -275,8 +523,9 @@ performance. Verify correctness.
 1. Apply `applySQL` (create index, or use rewritten query)
 2. Run `ANALYZE` on affected tables
 3. Run `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` with same benchmark protocol
-4. **If rewrite strategy**: verify result parity — `(original EXCEPT rewritten)
-   UNION ALL (rewritten EXCEPT original)` must return zero rows
+4. **If rewrite strategy**: verify result parity — `(original EXCEPT ALL rewritten)
+   UNION ALL (rewritten EXCEPT ALL original)` must return zero rows (uses
+   `EXCEPT ALL` to detect duplicate-count differences; see Section 9.3)
 5. **If index-only strategy**: skip parity check (same query, plan changes only)
 6. Record timing and plan metadata
 7. Execute `rollbackSQL` to restore state
@@ -288,7 +537,9 @@ performance. Verify correctness.
   "baseline": {
     "medianMs": 847.3,
     "p95Ms": 1203.1,
-    "planTopNode": "Seq Scan",
+    "leafAccessNodes": ["Seq Scan"],
+    "planNodeSet": ["Sort", "Seq Scan"],
+    "planStructureHash": "a1b2c3...",
     "sharedHitBlocks": 12847,
     "sharedReadBlocks": 45231
   },
@@ -296,7 +547,9 @@ performance. Verify correctness.
     "medianMs": 12.4,
     "p95Ms": 18.7,
     "cvPct": 8.2,
-    "planTopNode": "Index Scan",
+    "leafAccessNodes": ["Index Scan"],
+    "planNodeSet": ["Sort", "Index Scan"],
+    "planStructureHash": "d4e5f6...",
     "sharedHitBlocks": 847,
     "sharedReadBlocks": 23
   },
@@ -315,25 +568,54 @@ performance. Verify correctness.
 **Job**: Review proposed changes for operational risk that benchmarks can't catch.
 
 **Risk dimensions**:
-| Risk | What to check | Severity |
-|---|---|---|
-| Lock contention | `CREATE INDEX` without `CONCURRENTLY` on hot table | High |
-| Storage overhead | Index size vs table size ratio | Medium |
-| Write amplification | Index on frequently-updated column | Medium |
-| Query plan instability | Plan depends on statistics that shift with data growth | Low |
-| Migration complexity | Requires downtime or multi-step deploy | Context |
+| Risk | What to check | Source | Severity |
+|---|---|---|---|
+| Lock contention | `CREATE INDEX` without `CONCURRENTLY` on hot table | Static analysis (always available) | High |
+| Storage overhead | Index size vs table size ratio | Harness benchmark (always available) | Medium |
+| Write amplification | Index on frequently-updated column | Production telemetry (when available) or heuristic | Medium |
+| Query plan instability | Plan depends on statistics that shift with data growth | Heuristic (always available) | Low |
+| Migration complexity | Requires downtime or multi-step deploy | Static analysis (always available) | Context |
+
+**Production telemetry (optional)**: The auditor can provide higher-confidence
+risk assessments when optional production telemetry is available. The room
+config accepts an optional `productionStats` object:
+
+```json
+{
+  "productionStats": {
+    "type": "object",
+    "label": "Production Telemetry (Optional)",
+    "description": "Optional pg_stat_* snapshots for higher-confidence risk assessment",
+    "properties": {
+      "pgStatUserTables": "Path to pg_stat_user_tables export (CSV/JSON)",
+      "pgStatUserIndexes": "Path to pg_stat_user_indexes export (CSV/JSON)",
+      "relationSizes": "Path to relation size data (pg_total_relation_size output)",
+      "dmlRates": "Approximate DML rates per table (e.g., {\"orders\": {\"inserts_per_sec\": 500}})"
+    }
+  }
+}
+```
+
+When production telemetry is **available**, the auditor can cite concrete
+facts (e.g., "orders table has ~500 inserts/sec; this composite index adds
+~15% write overhead"). When telemetry is **unavailable**, the auditor must
+downgrade those findings to **heuristic/advisory** and clearly label them:
+"[Heuristic — no production telemetry] Write amplification risk is estimated
+as medium based on schema analysis; actual impact depends on DML rates."
 
 **Output contract**:
 ```json
 {
   "proposalId": "idx_orders_user_created",
   "riskScore": 3,
+  "telemetryAvailable": false,
   "findings": [
     {
       "severity": "medium",
       "category": "write_amplification",
-      "detail": "orders table has ~500 inserts/sec; this composite index adds ~15% write overhead",
-      "recommendation": "Acceptable for read-heavy workload. Monitor pg_stat_user_indexes after deploy."
+      "confidence": "heuristic",
+      "detail": "[Heuristic] orders table likely receives frequent inserts; this composite index adds write overhead",
+      "recommendation": "Monitor pg_stat_user_indexes after deploy. Provide production DML rates for a more precise estimate."
     }
   ],
   "approved": true,
@@ -350,14 +632,17 @@ threshold are preserved as warnings in the report but don't prevent promotion.
 ## 3. Phase State Machine
 
 ```
-PREFLIGHT
+PREFLIGHT (plugin-internal, no agent fan-out)
   check Docker availability
-  validate config (dbUrl or schemaSource, slowQuery)
+  validate config (conditional requirements: dbUrl, schemaPath, slowQuery)
+  validate slowQuery is read-only (SELECT / WITH ... SELECT)
+  reject slowQuery if it contains truly volatile functions (see Section 9.3)
+  detect source DB version and auto-match or warn on mismatch (if introspect mode)
   spin up container, load schema, load data (Tier 1/2/3), warm cache
     ↓
 BASELINE
   fan_out → builder: measure target query baseline
-  extract: medianMs, p95Ms, planTopNode, bufferStats
+  extract: medianMs, p95Ms, leafAccessNodes, planStructureHash, bufferStats
   store in state.baselines
     ↓
 ANALYSIS
@@ -378,10 +663,11 @@ STATIC_AUDIT
     ↓
 FRONTIER_REFINE
   recomputeFrontier():
-    - filter: riskScore <= maxRiskScore (and resultParity === true for rewrites)
-    - rank by: planShapeChanged desc, then speedupPct desc, then cvPct asc,
-      then riskScore asc, then indexSizeBytes asc
-    - promote best per strategyType bucket (index, rewrite) to frontier
+    - filter: riskScore <= maxRiskScore, resultParity === true for rewrites,
+      measurement accepted (passed confidence check — see noise handling)
+    - rank by: speedupPct desc, then cvPct asc, then riskScore asc,
+      then indexSizeBytes asc
+    - promote single best per strategyType bucket (index, rewrite) to frontier
   check stop conditions
     ↓ stop? → COMPLETE
     ↓ continue? → increment cycleIndex → ANALYSIS
@@ -389,13 +675,35 @@ FRONTIER_REFINE
 
 ### Stop Conditions
 
-| Condition | Trigger | Stop Reason |
-|---|---|---|
-| Cycle limit | `cycleIndex >= maxCycles` | `cycle_limit` |
-| Convergence | `bestImprovementPct >= targetImprovementPct` and no improvement in last `plateauCycles` cycles | `convergence` |
-| Plateau | No candidate improved over frontier for `plateauCycles` consecutive cycles | `plateau` |
-| Benchmark instability | Baseline CV% > 25% | `benchmark_unstable` |
-| Target met | Best speedup exceeds `targetImprovementPct` and auditor approved | `target_met` |
+Evaluated in precedence order (first match wins):
+
+| # | Condition | Trigger | Stop Reason |
+|---|---|---|---|
+| 1 | Benchmark instability | Baseline CV% > 25% after doubling `benchmarkTrials` (up to max) | `benchmark_unstable` |
+| 2 | Cycle limit | `cycleIndex >= maxCycles` | `cycle_limit` |
+| 3 | Target met + plateau | No improvement in last `plateauCycles` cycles AND best speedup exceeds `targetImprovementPct` AND auditor approved | `target_met` |
+| 4 | Plateau | No improvement in last `plateauCycles` cycles (catch-all for any plateau not matched by #3) | `plateau` |
+
+**Notes**:
+- `benchmark_unstable` is checked first. Before hard-stopping, the harness
+  attempts recovery by doubling `benchmarkTrials` (up to the configured max).
+  If still unstable after retry, the room stops but includes baseline plan
+  analysis in the report — plan shape analysis can still suggest useful indexes
+  even without reliable timing.
+- `target_met` and `plateau` both require the search to have plateaued (no
+  improvement for `plateauCycles` consecutive cycles). They differ in outcome:
+  `target_met` fires when the plateau is reached AND the target was met AND
+  auditor approved (a successful outcome); `plateau` is the catch-all that
+  fires for any other plateau (target not met, or target met but auditor
+  rejected the winning candidate). `target_met` is checked first so it takes
+  precedence — if it doesn't match, `plateau` catches the remaining cases.
+- Neither `target_met` nor `plateau` fires before the search has plateaued.
+  This prevents premature stopping: a basic index on a missing column often
+  exceeds the default 20% target on the first cycle, but the room continues
+  exploring to discover better candidates in other buckets (e.g., a rewrite
+  alternative) before stopping.
+- The previous `convergence` stop reason has been removed as it was redundant
+  with `target_met` + `plateau`.
 
 ---
 
@@ -419,12 +727,12 @@ Each candidate tracks:
   targetQuery: null,               // null = optimize original, or rewritten SQL
 
   // benchmarking
-  baseline: { medianMs, p95Ms, planTopNode, sharedHitBlocks, sharedReadBlocks },
-  result: { medianMs, p95Ms, cvPct, planTopNode, sharedHitBlocks, sharedReadBlocks },
+  baseline: { medianMs, p95Ms, leafAccessNodes, planNodeSet, planStructureHash, sharedHitBlocks, sharedReadBlocks },
+  result: { medianMs, p95Ms, cvPct, leafAccessNodes, planNodeSet, planStructureHash, sharedHitBlocks, sharedReadBlocks },
   resultParity: true,              // always true for index; checked for rewrite
   parityChecked: false,            // true only for rewrite strategies
   speedupPct: 98.5,
-  planShapeChanged: true,          // primary signal: did planner switch node types?
+  planShapeChanged: true,          // confidence signal: determines whether measurement is trusted
   indexSizeBytes: 8388608,
   explainJSON: { ... },
 
@@ -450,24 +758,38 @@ Buckets by `strategyType` (v1):
 - `index` — best index-only solution
 - `rewrite` — best query rewrite
 
-Each bucket tracks its own winner independently. The report presents both
+Each bucket tracks exactly **one winner** — the single best candidate per
+`strategyType`. The frontier may additionally retain a ranked list of
+runner-up candidates per bucket for the report, but **only the single winner
+per bucket is presented as a recommendation**. The report presents bucket
 winners side-by-side with deployment guidance for each.
+
+**Important v1 constraint**: Because v1 does not benchmark combinations,
+the report **must not** emit SQL that applies multiple frontier strategies
+together or imply that they were tested in combination. Each bucket winner
+is presented independently with its own measured speedup. If winners exist
+in both buckets, the report includes an advisory note: "These strategies
+were benchmarked independently — test them together manually before
+deploying both, as they may interact."
 
 **Combined candidate pass (v2)**: After the search converges, if there are
 frontier winners in both buckets, a synthesis pass tests them together. An
 index + rewrite combined might be faster than either alone, or they might
 conflict. This is deferred from v1 because it adds a new phase type (synthesis)
-and complicates the state machine. The v1 report can note "these two strategies
-are likely complementary — test them together manually."
+and complicates the state machine.
 
 ### 4.3 Frontier Ranking
 
+Only candidates that passed the confidence check (see Section 1.6 noise
+handling) are eligible for ranking. `planShapeChanged` is used upstream as
+a gate to determine whether a measurement is trusted enough to enter
+ranking — it is not a ranking key itself.
+
 Within each bucket, rank by:
-1. `planShapeChanged` (true first — plan changes are the primary signal)
-2. `speedupPct` descending (but only trusted when CV% is reasonable)
-3. `cvPct` ascending (prefer stable measurements)
-4. `riskScore` ascending (prefer lower operational risk)
-5. `indexSizeBytes` ascending (prefer smaller storage footprint)
+1. `speedupPct` descending
+2. `cvPct` ascending (prefer stable measurements)
+3. `riskScore` ascending (prefer lower operational risk)
+4. `indexSizeBytes` ascending (prefer smaller storage footprint)
 
 Timing ties are expected and common. When two candidates have speedups within
 each other's noise band (e.g., 94% vs 96% with CV% of 12%), prefer the one with
@@ -496,32 +818,39 @@ mutation hints:
 
 ```json
 {
+  "demoMode": {
+    "type": "boolean",
+    "label": "Demo Mode",
+    "default": false,
+    "description": "Use bundled e-commerce schema, data, and slow query. No database needed. Overrides schema/data/query inputs; outputDir, postgresVersion, and tuning knobs still apply."
+  },
   "schemaSource": {
     "type": "enum",
     "label": "Schema Source",
     "options": ["introspect", "dump", "migrations"],
     "default": "introspect",
-    "description": "How to load the database schema into the benchmark container"
+    "description": "How to load the database schema into the benchmark container. Ignored in demo mode."
   },
   "dbUrl": {
     "type": "string",
     "label": "Postgres URL",
-    "required": true,
+    "required": false,
     "placeholder": "postgres://user:pass@localhost:5432/mydb",
-    "description": "Source database for schema introspection (read-only, never modified)"
+    "description": "Source database connection. Required when schemaSource = 'introspect' or seedFromSource = true. Read-only, never modified."
   },
   "slowQuery": {
     "type": "string",
     "label": "Target Query",
     "required": true,
     "placeholder": "SELECT o.*, u.email FROM orders o JOIN users u ON ...",
-    "description": "The SQL query to optimize"
+    "description": "The SQL query to optimize. Must be a fully executable SQL statement with concrete values (no $1 placeholders). v1 is scoped to read-only queries only (SELECT / WITH ... SELECT). If you have a parameterized query, substitute representative values."
   },
   "schemaPath": {
     "type": "string",
     "label": "Schema/Migrations Path",
+    "required": false,
     "placeholder": "./db/schema.sql or ./prisma/migrations",
-    "description": "Required when schemaSource is 'dump' or 'migrations'"
+    "description": "Required when schemaSource is 'dump' or 'migrations'. Ignored for 'introspect'."
   },
   "seedDataPath": {
     "type": "string",
@@ -600,28 +929,32 @@ mutation hints:
 ### 6.1 Summary Metrics
 
 - **Best Speedup**: `98.5%` (847ms → 12ms)
-- **Frontier Size**: 3 strategies across 2 buckets
-- **Candidates Tested**: 14 proposed, 8 benchmarked, 3 frontier, 2 rejected
-- **Cycles Completed**: 3 of 4
+- **Frontier**: 2 winners across 2 buckets (1 runner-up listed)
+- **Candidates Tested**: 14 proposed, 8 benchmarked, 2 winners, 2 rejected
+- **Cycles Completed**: 4 of 4
 
 ### 6.2 Frontier Table
+
+Each bucket has exactly one winner. Runner-ups are listed for context but
+were not tested in combination with the winner.
 
 | Strategy | Type | Baseline (ms) | Optimized (ms) | Speedup | Risk | Status |
 |---|---|---|---|---|---|---|
 | Composite index on (user_id, created_at) | index | 847.3 | 12.4 | 98.5% | 3/10 | Winner |
-| Rewrite: CTE → lateral join | rewrite | 847.3 | 234.1 | 72.4% | 2/10 | Frontier |
-| Partial index WHERE status='active' | index | 847.3 | 45.8 | 94.6% | 4/10 | Frontier |
+| Rewrite: CTE → lateral join | rewrite | 847.3 | 234.1 | 72.4% | 2/10 | Winner |
+| Partial index WHERE status='active' | index | 847.3 | 45.8 | 94.6% | 4/10 | Runner-up |
 
 ### 6.3 Code Blocks
 
-**Winner SQL** (applies all frontier index strategies):
+**Index Bucket Winner**:
 ```sql
 -- Index: idx_orders_user_created
+-- Deploy with:
 CREATE INDEX CONCURRENTLY idx_orders_user_created
   ON orders (user_id, created_at DESC);
 
--- Speedup: 98.5% (847ms → 12ms)
--- Risk: 3/10 — ~15% write overhead on orders inserts
+-- Speedup: 98.5% (847ms → 12ms) — benchmarked independently
+-- Risk: 3/10 — write overhead estimated heuristically (no production telemetry)
 -- Storage: ~8MB for 100K rows
 ```
 
@@ -667,9 +1000,13 @@ Target state: ~2500-3500 lines mirroring fft-autotune's module structure.
 | `lib/phases.js` | Phase state tracking, partial fan-out advancement, dashboard metric emission | 80 |
 | `lib/report.js` | Final report generation: frontier table, winner SQL blocks, audit summary, deployment guide | 150 |
 | `lib/utils.js` | Safe string ops, SQL sanitization, connection string parsing, path validation | 80 |
-| `Dockerfile.harness` | Pinned Postgres image with benchmark GUCs baked in | 30 |
+| `Dockerfile.harness` | Pinned Postgres image (`postgres:${postgresVersion}-alpine`) with benchmark GUCs baked in | 30 |
 | `harness/benchmark.sh` | Shell script the builder agent executes inside/against the container for warmup + trials | 60 |
+| `assets/demo/schema.sql` | Demo e-commerce schema (users, orders, order_items, products, categories) | ~80 |
+| `assets/demo/data.sql.gz` | Demo data dump (~500K orders, ~50K users, ~2M order_items, realistic distributions) | binary |
+| `assets/demo/query.sql` | Demo slow query (multi-join analytics, genuinely slow without indexes) | ~15 |
 | `test/harness.test.js` | Container lifecycle tests (requires Docker) | 150 |
+| `test/demo.test.js` | Demo mode end-to-end test: spin up, run one cycle, verify a frontier candidate exists | 80 |
 | `test/envelope.test.js` | Response parsing tests | 100 |
 | `test/candidates.test.js` | Frontier ranking and stop condition tests | 100 |
 
@@ -686,25 +1023,44 @@ Target state: ~2500-3500 lines mirroring fft-autotune's module structure.
 
 The current manifest is mostly correct. Changes needed:
 
-- Add `schemaSource`, `schemaPath`, `seedDataPath`, `scaleFactor`,
-  `postgresVersion` to `roomConfigSchema`
+- Add `demoMode`, `schemaSource`, `schemaPath`, `seedDataPath`, `seedFromSource`,
+  `scaleFactor`, `postgresVersion`, `productionStats` to `roomConfigSchema`
+- Make `dbUrl` conditionally required (only when `schemaSource = 'introspect'`
+  or `seedFromSource = true`)
+- Make `schemaPath` conditionally required (only when `schemaSource = 'dump'`
+  or `schemaSource = 'migrations'`)
 - Add `warmupRuns`, `benchmarkTrials`, `plateauCycles` to `configSchema`
 - Update `setup.compatibilityDescription` to mention Docker requirement
-- Add `execute_validate` and `explain_analyze` phases to dashboard
-  (currently listed but not actually used in the lifecycle)
+- **Remove** `execute_validate` and `explain_analyze` from dashboard phases —
+  the canonical v1 phase graph is: PREFLIGHT → BASELINE → ANALYSIS → CODEGEN →
+  STATIC_AUDIT → FRONTIER_REFINE → COMPLETE. The work those phases described
+  is handled within CODEGEN (the builder runs benchmarks and parity checks
+  as part of CODEGEN). Keeping them in the manifest as unused phases creates
+  confusion.
+- Remove or document the existing `dryRun` field in `roomConfigSchema` — if
+  retained, define it as a mode that skips Docker and performs static analysis
+  only; otherwise remove it.
+- Align dashboard candidate status counters with the spec's candidate lifecycle:
+  `proposed → promoted → benchmarked → audited → frontier | rejected`
 
 ---
 
 ## 8. Implementation Order
 
-### Phase 1: Harness (make benchmarks real)
+### Phase 1: Harness + Demo (make benchmarks real)
 
-1. `Dockerfile.harness` + `harness/benchmark.sh`
-2. `lib/harness.js` — container up/down, schema load, snapshot/restore
-3. `lib/config.js` — Docker availability check, schema source validation
-4. Test: can spin up container, load a schema, run EXPLAIN ANALYZE, tear down
+1. `assets/demo/` — generate the e-commerce schema, data dump, and slow query
+2. `Dockerfile.harness` + `harness/benchmark.sh`
+3. `lib/harness.js` — container up/down, schema load, snapshot/restore, demo mode
+4. `lib/config.js` — Docker availability check, schema source validation, demo detection
+5. Test: demo mode end-to-end — spin up container with bundled data, run
+   EXPLAIN ANALYZE, verify baseline timing, tear down
 
-This is the foundation. Nothing else matters until benchmarks are real.
+Build the demo scenario first. It becomes the test fixture for everything
+else — every harness change can be validated against the demo without
+needing an external database. The demo data is also the fastest way to
+prove the full pipeline works end-to-end before investing in Tier 1/2/3
+support.
 
 ### Phase 2: Response Parsing (make agent output usable)
 
@@ -739,7 +1095,27 @@ This is the foundation. Nothing else matters until benchmarks are real.
 
 The builder agent connects to the Docker Postgres instance and runs SQL. This
 means the builder needs the container's connection string in its prompt. The
-plugin manages container lifecycle; the builder just runs queries.
+**plugin** (not the agent) manages the full Docker lifecycle — the builder
+agent receives only a connection string to an already-running container and
+never has Docker socket access.
+
+**Security and network topology**: The plugin enforces resource limits on the
+container (`--memory=512m`, `--cpus=2`). For network isolation, the plugin
+creates a dedicated internal Docker network:
+
+```
+docker network create --internal pg-harness-net
+docker run --network=pg-harness-net ...
+```
+
+The `--internal` flag blocks all egress to the internet while allowing the
+builder to connect to the container via the Docker bridge. During PREFLIGHT,
+if `introspect` mode or Tier 2 sampling requires access to the source `dbUrl`,
+the plugin performs all external data fetching (schema dump, data sampling)
+from the host/plugin side and pipes results into the container — the container
+itself never needs external network access. After data loading completes, the
+container runs on the isolated internal network for the remainder of the
+session. This prevents data exfiltration while preserving builder connectivity.
 
 Alternative considered: plugin executes SQL via a harness script, builder only
 proposes. Rejected because the builder needs to iterate (check plan shape,
@@ -747,9 +1123,24 @@ adjust, retry) and a prompt-response-prompt loop is too slow.
 
 ### 9.2 Single Query Focus (v1)
 
-v1 optimizes a single slow query. Future versions could accept a workload file
-(multiple queries with frequency weights) and optimize across the workload,
-checking that improving one query doesn't regress others.
+v1 optimizes a single slow query. The query must be:
+- **Fully executable**: concrete literal values, no `$1` placeholders or
+  prepared statement parameters. If the user has a parameterized query, they
+  should substitute representative values that exercise the problematic plan.
+- **Read-only**: `SELECT` or `WITH ... SELECT` only. `EXPLAIN ANALYZE`
+  executes the statement, so DML queries (`INSERT`, `UPDATE`, `DELETE`) would
+  modify harness data during benchmarking. v1 validates this at PREFLIGHT
+  and rejects non-SELECT queries.
+
+**v2 — parameterized query support**: Accept query templates with
+representative parameter sets to test plan quality across different
+selectivities (e.g., high-cardinality vs low-cardinality filter values).
+Define whether benchmarking uses literal SQL or `PREPARE`/`EXECUTE` to
+test generic-vs-custom plan behavior.
+
+Future versions could also accept a workload file (multiple queries with
+frequency weights) and optimize across the workload, checking that improving
+one query doesn't regress others.
 
 ### 9.3 Result Parity — Two Distinct Cases
 
@@ -760,13 +1151,76 @@ different correctness properties:
 If a rewritten query returns different results from the original, the candidate
 is rejected immediately regardless of speedup. This is non-negotiable.
 
-The parity check is: `(original EXCEPT rewritten) UNION ALL (rewritten EXCEPT
-original)` must return zero rows. The builder must run this check and report
-the result. The plugin verifies the check was performed (not just claimed).
+The parity check uses multi-set comparison: `(original EXCEPT ALL rewritten)
+UNION ALL (rewritten EXCEPT ALL original)` must return zero rows. Using
+`EXCEPT ALL` (not `EXCEPT`) is critical — plain `EXCEPT` uses set semantics
+and will miss duplicate-count regressions (e.g., original returns `[A, A]`
+but rewrite returns `[A]` would falsely pass with `EXCEPT`).
 
-Edge cases the builder must handle:
-- ORDER BY differences (use unordered comparison via EXCEPT)
-- NULL handling (EXCEPT treats NULLs as equal, which is correct here)
+**Volatile function handling**: Postgres distinguishes between
+transaction-stable and truly volatile functions:
+- **Transaction-stable** (`STABLE`/`IMMUTABLE`): `NOW()`, `CURRENT_TIMESTAMP`,
+  `current_user` — these return the same value within a transaction. Running
+  both queries in the same transaction is sufficient to freeze these.
+- **Truly volatile** (`VOLATILE`): `CLOCK_TIMESTAMP()`, `random()`,
+  `nextval()`, `uuid_generate_v4()` — these return different values on every
+  call, even within the same transaction. A shared transaction snapshot does
+  **not** freeze these.
+
+For v1, the **plugin** detects volatile functions during PREFLIGHT (which is
+plugin-internal, no agent fan-out) and **rejects** queries containing them —
+automatic normalization (e.g., replacing `random()` with a literal) would
+change query semantics and make benchmarks misleading.
+
+**Detection strategy (two-pass)**:
+1. **Best-effort regex pass (pre-schema-load)**: Before the harness is up,
+   the plugin scans the SQL for a built-in blocklist of known volatile
+   functions (`random()`, `clock_timestamp()`, `nextval()`, `txid_current()`,
+   `uuid_generate_v4()`, `gen_random_uuid()`, `setseed()`, `pg_sleep()`).
+   This catches common cases immediately with no DB connection. This pass is
+   documented as **best-effort** — it cannot catch user-defined volatile
+   functions or aliased calls.
+2. **Catalog-verified pass (post-schema-load)**: After the schema is loaded
+   into the harness container, the plugin runs the query through
+   `EXPLAIN VERBOSE` (or parses `pg_proc.provolatile` for each function
+   referenced in the plan) to identify any remaining `VOLATILE`-classified
+   functions that the regex missed, including user-defined functions. If any
+   are found, PREFLIGHT fails with a specific error naming the volatile
+   function(s).
+
+**On detection**:
+- PREFLIGHT fails with a clear error asking the user to provide a literalized
+  test variant with volatile calls replaced by concrete values.
+- The user may provide an explicit literalized `slowQuery` (e.g., replacing
+  `clock_timestamp()` with a fixed timestamp). The room benchmarks what the
+  user provides without attempting automatic rewriting.
+
+Transaction-stable functions (`NOW()`, `CURRENT_TIMESTAMP`, `current_user`)
+are safe and handled automatically: both the original and rewritten queries
+are executed within the **same statement or single-snapshot transaction** to
+freeze their values. Note: Postgres `STABLE` functions are only guaranteed
+to return the same value within a single statement, not across separate
+statements in the same transaction. The parity check handles this by wrapping
+the original and rewritten queries in a single `SELECT` expression (via the
+`EXCEPT ALL` comparison), ensuring both sides see the same snapshot and
+`STABLE` function results.
+
+**Order-sensitive comparison**: The `EXCEPT ALL` check is unordered and does
+not validate row ordering. This is a **known v1 limitation**: if the original
+query includes `ORDER BY`, a rewrite that returns the correct rows in a
+different order will pass parity. For queries with `ORDER BY ... LIMIT/OFFSET`,
+incorrect ordering can change which rows are returned, which `EXCEPT ALL` will
+catch (different rows). For queries with `ORDER BY` but no `LIMIT`, ordering
+differences are not detected in v1. The report flags when a parity-checked
+rewrite involves an `ORDER BY` clause and advises manual verification of
+ordering semantics. A v2 enhancement could add row-number-based positional
+comparison for order-sensitive queries.
+
+The builder must run this check and report the result. The plugin verifies
+the check was performed (not just claimed).
+
+Additional edge cases the builder must handle:
+- NULL handling (EXCEPT ALL treats NULLs as equal, which is correct here)
 - Floating point precision (unlikely in typical queries, but flag if present)
 
 **Index-only strategies — no parity check needed**:
@@ -811,33 +1265,66 @@ that the user applies manually.
 
 ### v1 (build this)
 
+- **Demo mode**: bundled e-commerce schema + data + slow query, one click,
+  no database needed — just Docker. Uses the same full pipeline (not a
+  simplified codepath). Serves as first-run experience, dev/CI testing,
+  and showcase.
+- **Query scope**: read-only `SELECT` / `WITH ... SELECT` only, with concrete
+  literal values (no parameterized queries)
 - Strategy types: `index` and `rewrite` only
-- Data population: Tier 1 (user seed) and Tier 2 (sampled from source), with
-  Tier 3 (naive synthetic) as fallback with explicit warnings
-- Parity: hard gate for rewrites, skip for index-only
-- Frontier: independent winners per bucket, no combined pass
-- Benchmarking: plan shape as primary signal, timing as secondary, CV%
-  thresholds for noise rejection
+- Data population: Tier 1 (user seed) and Tier 2 (sampled from source via
+  client-side COPY + TABLESAMPLE), with Tier 3 (naive synthetic) as fallback
+  with explicit warnings
+- Parity: hard gate for rewrites using `EXCEPT ALL` (multi-set comparison),
+  transaction-stable expressions (`NOW()` etc.) frozen via shared transaction;
+  queries with truly volatile functions (`random()`, `CLOCK_TIMESTAMP()` etc.)
+  rejected at PREFLIGHT unless user provides literalized variant;
+  order-sensitive comparison is a known limitation (see Section 9.3)
+- Frontier: single winner per bucket, no combined pass; report must not
+  recommend untested combinations
+- Benchmarking: plan shape change as confidence gate (determines whether a
+  timing measurement is trusted), speedup as ranking signal, CV% thresholds
+  for noise rejection, periodic baseline re-measurement
+- Data population: Tier 2 is reliable for single-table index decisions but
+  degrades for multi-join rewrites due to independent per-table sampling;
+  report flags this when applicable. Source DB is strictly read-only (no
+  ANALYZE or writes).
+- Auditor risk findings labeled as heuristic/advisory when production telemetry
+  is unavailable
 - Config/schema strategies: advisory notes in report, not benchmarked
 
 ### v2 (defer)
 
 - Strategy types: `schema` (materialized views, partitioning, denormalization)
-- Combined candidate synthesis pass
+- Combined candidate synthesis pass (test frontier winners from multiple buckets together)
 - Agent-generated data distributions (Tier 4)
+- Parameterized query support (query templates + representative parameter sets,
+  `PREPARE`/`EXECUTE` benchmarking, generic-vs-custom plan testing)
+- Order-sensitive parity comparison for queries with `ORDER BY`
 - Multi-query workload optimization (regression checking across query set)
 - Config tuning (requires production-like concurrency to be meaningful)
 - Parallel workers / JIT benchmark pass (production-realistic mode)
 
 ---
 
-## 11. Example Session
+## 11. Example Sessions
+
+### 11.1 Demo Mode (zero config)
+
+**Input**: `demoMode: true`
+
+Everything else is automatic — the room loads the bundled e-commerce schema,
+500K-row data dump, and the demo slow query. The user clicks start and
+watches the room work. Expected outcome: composite index on
+`orders(user_id, created_at, status)` or similar, >10x speedup.
+
+### 11.2 Real Database (Tier 1 seed)
 
 **Input**:
 - `dbUrl`: `postgres://app:secret@localhost:5432/myapp`
 - `slowQuery`: `SELECT o.id, o.total, u.email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.created_at > NOW() - INTERVAL '30 days' AND o.status = 'completed' ORDER BY o.created_at DESC LIMIT 100`
 - `schemaSource`: `introspect`
-- `scaleFactor`: 500000
+- `seedDataPath`: `./db/staging-dump.sql`
 
 **Cycle 0 — Preflight + Baseline**:
 - Harness introspects schema: `orders` (12 columns, 3 indexes), `users` (8 columns, 1 index)
@@ -859,9 +1346,17 @@ that the user applies manually.
 - Covering index vs composite: both Index Scan, speedup within noise band (98.5% vs 98.7%, CV% 14%). Covering index wins on tiebreak: same risk, but index-only scan avoids heap fetches.
 - Auditor: covering index risk 3/10, rewrite risk 1/10
 
-**Cycle 3 — Convergence**:
-- Plateau detected: no candidate improved over covering index (98.7%) — marginal refinements only
-- Stop reason: `convergence` — target 20% met, plateau for 2 cycles
+**Cycle 3 — Continued exploration**:
+- Explorer proposes expression index variant and alternative rewrite
+- No candidate improved over covering index (98.7%) or lateral join rewrite (72.4%)
+- Plateau count: 1 of 2 — keep exploring
+
+**Cycle 4 — Convergence**:
+- Explorer proposes further refinements
+- Still no improvement over frontier winners
+- Plateau count: 2 of 2 — plateau reached with `plateauCycles: 2`
+- Target 20% met (98.7% >> 20%), auditor approved, and search has plateaued
+- Stop reason: `target_met`
 
 **Report**:
 - Index bucket winner: covering index on orders(user_id, created_at DESC) INCLUDE (status, total)
@@ -870,4 +1365,4 @@ that the user applies manually.
 - Rewrite bucket winner: lateral join rewrite
   - Speedup: 72.4% (847ms → 234ms), parity verified
   - Deploy: swap query in application code, no schema changes needed
-- Note: "Winners in both buckets — consider testing the covering index + rewrite combination together for potential additional gains."
+- Advisory: "Winners in both buckets were benchmarked independently — test the covering index + rewrite combination together manually before deploying both, as they may interact."

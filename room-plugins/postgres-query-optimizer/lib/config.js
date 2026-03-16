@@ -1,66 +1,230 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULTS } from './constants.js';
+
+import { DEFAULTS, POSTGRES_VERSIONS } from './constants.js';
+import {
+  clampInt,
+  detectVolatileFunctions,
+  isReadOnlyQuery,
+  isSafeSubpath,
+  normalizeStringArray,
+  parseConnectionUrl,
+  safeTrim,
+} from './utils.js';
+import { checkDockerAvailability } from './harness.js';
+
+// ---------------------------------------------------------------------------
+// Room config normalisation
+// ---------------------------------------------------------------------------
 
 export function normalizeRoomConfig(input = {}) {
-  const dbUrl = input.dbUrl || '';
-  const slowQuery = input.slowQuery || '';
-  const schemaFilter = Array.isArray(input.schemaFilter) ? input.schemaFilter : [];
-  const dryRun = Boolean(input.dryRun);
-  const outputDir = input.outputDir || '.commands/postgres-tuner';
+  const demoMode = Boolean(input.demoMode);
+  const schemaSource = ['introspect', 'dump', 'migrations'].includes(input.schemaSource)
+    ? input.schemaSource
+    : DEFAULTS.schemaSource;
+  const dbUrl = safeTrim(input.dbUrl, 4000);
+  const slowQuery = safeTrim(input.slowQuery, 50000);
+  const schemaPath = safeTrim(input.schemaPath, 4000);
+  const seedDataPath = safeTrim(input.seedDataPath, 4000);
+  const seedFromSource = Boolean(input.seedFromSource);
+  const postgresVersion = POSTGRES_VERSIONS.includes(String(input.postgresVersion))
+    ? String(input.postgresVersion)
+    : DEFAULTS.postgresVersion;
+  const schemaFilter = normalizeStringArray(input.schemaFilter || [], 20);
+  const outputDir = safeTrim(input.outputDir || DEFAULTS.outputDir, 4000);
 
   return {
+    demoMode,
+    schemaSource: demoMode ? 'demo' : schemaSource,
     dbUrl,
     slowQuery,
+    schemaPath,
+    seedDataPath,
+    seedFromSource,
+    postgresVersion,
     schemaFilter,
-    dryRun,
     outputDir,
   };
 }
 
+// ---------------------------------------------------------------------------
+// Full merged config (room + orchestrator)
+// ---------------------------------------------------------------------------
+
 export function getConfig(ctx) {
   const roomConfig = normalizeRoomConfig(ctx?.roomConfig || {});
   return {
-    plannedCandidatesPerCycle: ctx?.orchestratorConfig?.plannedCandidatesPerCycle || DEFAULTS.plannedCandidatesPerCycle,
-    promoteTopK: ctx?.orchestratorConfig?.promoteTopK || DEFAULTS.promoteTopK,
-    maxRiskScore: ctx?.orchestratorConfig?.maxRiskScore || DEFAULTS.maxRiskScore,
-    targetImprovementPct: ctx?.orchestratorConfig?.targetImprovementPct || DEFAULTS.targetImprovementPct,
+    plannedCandidatesPerCycle: clampInt(ctx?.orchestratorConfig?.plannedCandidatesPerCycle, 1, 10, DEFAULTS.plannedCandidatesPerCycle),
+    promoteTopK: clampInt(ctx?.orchestratorConfig?.promoteTopK, 1, 5, DEFAULTS.promoteTopK),
+    maxRetestCandidates: clampInt(ctx?.orchestratorConfig?.maxRetestCandidates, 1, 3, DEFAULTS.maxRetestCandidates),
+    maxRiskScore: clampInt(ctx?.orchestratorConfig?.maxRiskScore, 0, 10, DEFAULTS.maxRiskScore),
+    targetImprovementPct: Number.isFinite(Number(ctx?.orchestratorConfig?.targetImprovementPct))
+      ? Math.max(0, Math.min(1000, Number(ctx.orchestratorConfig.targetImprovementPct)))
+      : DEFAULTS.targetImprovementPct,
+    warmupRuns: clampInt(ctx?.orchestratorConfig?.warmupRuns, 1, 20, DEFAULTS.warmupRuns),
+    benchmarkTrials: clampInt(ctx?.orchestratorConfig?.benchmarkTrials, 3, 50, DEFAULTS.benchmarkTrials),
+    plateauCycles: clampInt(ctx?.orchestratorConfig?.plateauCycles, 1, 5, DEFAULTS.plateauCycles),
+    scaleFactor: clampInt(ctx?.orchestratorConfig?.scaleFactor, 1000, 1000000, DEFAULTS.scaleFactor),
+    containerMemory: DEFAULTS.containerMemory,
+    containerCpus: DEFAULTS.containerCpus,
     ...roomConfig,
   };
 }
 
+// ---------------------------------------------------------------------------
+// Compatibility checking
+// ---------------------------------------------------------------------------
+
+export function buildCompatibilityReport(config) {
+  const good = [];
+  const missing = [];
+  const warnings = [];
+  const hardFailures = [];
+
+  // Docker check
+  const docker = checkDockerAvailability();
+  if (!docker.ok) {
+    hardFailures.push({
+      id: 'docker_missing',
+      label: 'Docker',
+      details: docker.message || 'Docker is not available. Docker is required to spin up an isolated Postgres instance.',
+    });
+  } else {
+    good.push({ id: 'docker', label: 'Docker', details: 'Available' });
+  }
+
+  // Demo mode — skip most other checks
+  if (config.demoMode) {
+    good.push({ id: 'demo_mode', label: 'Demo Mode', details: 'Enabled — using bundled e-commerce scenario' });
+    return { compatible: hardFailures.length === 0, good, missing, warnings, hardFailures };
+  }
+
+  // Slow query
+  if (!config.slowQuery) {
+    hardFailures.push({
+      id: 'query_missing',
+      label: 'Target Query',
+      details: 'A slow query must be provided to optimise',
+    });
+  } else if (!isReadOnlyQuery(config.slowQuery)) {
+    hardFailures.push({
+      id: 'query_not_readonly',
+      label: 'Target Query',
+      details: 'Query must be a read-only SELECT or WITH...SELECT',
+    });
+  } else {
+    good.push({ id: 'query', label: 'Target Query', details: 'Provided (read-only)' });
+    // Volatile function check
+    const volatiles = detectVolatileFunctions(config.slowQuery);
+    if (volatiles.length > 0) {
+      hardFailures.push({
+        id: 'volatile_functions',
+        label: 'Volatile Functions',
+        details: `Query contains volatile functions: ${volatiles.join(', ')}. Replace with literal values.`,
+      });
+    }
+  }
+
+  // Schema source validation
+  if (config.schemaSource === 'introspect') {
+    if (!config.dbUrl) {
+      hardFailures.push({
+        id: 'db_url_missing',
+        label: 'Database URL',
+        details: 'dbUrl is required when schemaSource is "introspect"',
+      });
+    } else {
+      const parsed = parseConnectionUrl(config.dbUrl);
+      if (!parsed) {
+        hardFailures.push({
+          id: 'db_url_invalid',
+          label: 'Database URL',
+          details: 'dbUrl could not be parsed as a valid connection string',
+        });
+      } else {
+        good.push({ id: 'db_url', label: 'Database URL', details: `${parsed.host}:${parsed.port}/${parsed.database}` });
+      }
+    }
+  }
+
+  if ((config.schemaSource === 'dump' || config.schemaSource === 'migrations') && !config.schemaPath) {
+    hardFailures.push({
+      id: 'schema_path_missing',
+      label: 'Schema Path',
+      details: `schemaPath is required when schemaSource is "${config.schemaSource}"`,
+    });
+  } else if (config.schemaPath) {
+    if (!fs.existsSync(config.schemaPath)) {
+      hardFailures.push({
+        id: 'schema_path_invalid',
+        label: 'Schema Path',
+        details: `schemaPath "${config.schemaPath}" does not exist`,
+      });
+    } else {
+      good.push({ id: 'schema_path', label: 'Schema Path', details: config.schemaPath });
+    }
+  }
+
+  // Seed data
+  if (config.seedFromSource && !config.dbUrl) {
+    hardFailures.push({
+      id: 'seed_source_no_url',
+      label: 'Seed from Source',
+      details: 'dbUrl is required when seedFromSource is true',
+    });
+  }
+
+  if (config.seedDataPath) {
+    if (!fs.existsSync(config.seedDataPath)) {
+      warnings.push({
+        id: 'seed_path_invalid',
+        label: 'Seed Data Path',
+        details: `seedDataPath "${config.seedDataPath}" does not exist`,
+      });
+    } else {
+      good.push({ id: 'seed_data', label: 'Seed Data Path', details: config.seedDataPath });
+    }
+  } else if (!config.seedFromSource) {
+    warnings.push({
+      id: 'no_seed_data',
+      label: 'Data Source',
+      details: 'No seedDataPath or seedFromSource configured — Tier 3 synthetic data will be used (less reliable)',
+    });
+  }
+
+  return { compatible: hardFailures.length === 0, good, missing, warnings, hardFailures };
+}
+
 export async function checkCompatibility(payload = {}) {
   const config = normalizeRoomConfig(payload.roomConfig || payload);
-  const hardFailures = [];
-  const good = [];
-
-  if (!config.dbUrl) {
-    hardFailures.push({ id: 'db_url_missing', label: 'Database URL', details: 'Postgres connection string is required' });
-  } else {
-    // In a real implementation, we would try to connect here.
-    good.push({ id: 'db_url', label: 'Database URL', details: 'Provided' });
-  }
-
-  if (!config.slowQuery) {
-    hardFailures.push({ id: 'query_missing', label: 'Target Query', details: 'A slow query must be provided to optimize' });
-  } else {
-    good.push({ id: 'query', label: 'Target Query', details: 'Provided' });
-  }
-
-  return {
-    ok: true,
-    report: {
-      compatible: hardFailures.length === 0,
-      good,
-      hardFailures,
-      warnings: [],
-      missing: [],
-    }
-  };
+  const report = buildCompatibilityReport(config);
+  return { ok: true, report };
 }
+
+// ---------------------------------------------------------------------------
+// Make compatible (scaffold output directory)
+// ---------------------------------------------------------------------------
 
 export async function makeCompatible(payload = {}) {
   const config = normalizeRoomConfig(payload.roomConfig || payload);
-  // Implementation for scaffolding output dir, etc.
-  return { ok: true, applied: true, actions: ['Initialized tuner workspace'] };
+  const actions = [];
+  const errors = [];
+
+  try {
+    if (config.outputDir && !fs.existsSync(config.outputDir)) {
+      fs.mkdirSync(config.outputDir, { recursive: true });
+      actions.push(`Created output directory ${config.outputDir}`);
+    }
+  } catch (err) {
+    errors.push(err?.message || String(err));
+  }
+
+  const report = buildCompatibilityReport(config);
+  return {
+    ok: true,
+    applied: actions.length > 0,
+    actions,
+    errors,
+    report,
+  };
 }

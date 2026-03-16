@@ -42,8 +42,6 @@
           "analysis",
           "codegen",
           "static_audit",
-          "execute_validate",
-          "explain_analyze",
           "frontier_refine",
           "complete"
         ],
@@ -53,8 +51,6 @@
           "analysis": "Analysis",
           "codegen": "Codegen",
           "static_audit": "Static Audit",
-          "execute_validate": "Validate",
-          "explain_analyze": "EXPLAIN ANALYZE",
           "frontier_refine": "Refine",
           "complete": "Complete"
         }
@@ -66,10 +62,10 @@
         "layout": "row",
         "counters": [
           { "key": "proposed", "label": "Proposed", "color": "gray" },
-          { "key": "validated", "label": "Validated", "color": "blue" },
-          { "key": "benchmarked", "label": "Speedup", "color": "green" },
+          { "key": "promoted", "label": "Promoted", "color": "blue" },
+          { "key": "benchmarked", "label": "Benchmarked", "color": "green" },
           { "key": "frontier", "label": "Frontier", "color": "orange" },
-          { "key": "blocked", "label": "Risky", "color": "red" }
+          { "key": "rejected", "label": "Rejected", "color": "red" }
         ]
       },
       {
@@ -89,10 +85,12 @@
         "key": "frontier",
         "label": "Frontier",
         "columns": [
-          { "key": "strategyType", "label": "Type", "width": 120 },
-          { "key": "executionTimeMs", "label": "Time (ms)", "width": 110 },
+          { "key": "strategyType", "label": "Type", "width": 100 },
+          { "key": "proposalId", "label": "Proposal", "width": 180 },
+          { "key": "medianMs", "label": "Time (ms)", "width": 100 },
           { "key": "speedupPct", "label": "Speedup %", "width": 100 },
           { "key": "indexSizeMb", "label": "Index Size", "width": 100 },
+          { "key": "riskScore", "label": "Risk", "width": 60 },
           { "key": "status", "label": "Status", "width": 90 },
           { "key": "owner", "label": "Builder", "width": 120 }
         ],
@@ -103,13 +101,14 @@
         "key": "candidates",
         "label": "All Attempts",
         "columns": [
-          { "key": "strategyType", "label": "Type", "width": 120 },
-          { "key": "executionTimeMs", "label": "Time (ms)", "width": 110 },
+          { "key": "strategyType", "label": "Type", "width": 100 },
+          { "key": "proposalId", "label": "Proposal", "width": 180 },
+          { "key": "medianMs", "label": "Time (ms)", "width": 100 },
           { "key": "speedupPct", "label": "Speedup %", "width": 100 },
           { "key": "status", "label": "Status", "width": 90 },
-          { "key": "riskScore", "label": "Risk", "width": 80 },
+          { "key": "riskScore", "label": "Risk", "width": 60 },
           { "key": "owner", "label": "Builder", "width": 120 },
-          { "key": "blockedReason", "label": "Reason", "width": 300 }
+          { "key": "notes", "label": "Notes", "width": 300 }
         ],
         "sortable": true
       }
@@ -141,11 +140,11 @@
       "metricKey": "candidates",
       "columns": [
         { "key": "strategyType", "label": "Type", "width": 120 },
-        { "key": "executionTimeMs", "label": "Execution (ms)", "width": 110 },
+        { "key": "medianMs", "label": "Execution (ms)", "width": 110 },
         { "key": "speedupPct", "label": "Speedup %", "width": 100 },
         { "key": "status", "label": "Status", "width": 90 },
         { "key": "owner", "label": "Builder", "width": 120 },
-        { "key": "blockedReason", "label": "Notes", "width": 300 }
+        { "key": "notes", "label": "Notes", "width": 300 }
       ]
     },
     "codeBlocks": [
@@ -158,31 +157,68 @@
     "promoteTopK": { "type": "integer", "min": 1, "max": 5, "default": 2 },
     "maxRetestCandidates": { "type": "integer", "min": 1, "max": 3, "default": 1 },
     "maxRiskScore": { "type": "integer", "min": 0, "max": 10, "default": 7 },
-    "targetImprovementPct": { "type": "number", "min": 0, "max": 1000, "default": 20 }
+    "targetImprovementPct": { "type": "number", "min": 0, "max": 1000, "default": 20 },
+    "warmupRuns": { "type": "integer", "min": 1, "max": 20, "default": 3 },
+    "benchmarkTrials": { "type": "integer", "min": 3, "max": 50, "default": 10 },
+    "plateauCycles": { "type": "integer", "min": 1, "max": 5, "default": 2 },
+    "scaleFactor": { "type": "integer", "min": 1000, "max": 1000000, "default": 100000 }
   },
   "roomConfigSchema": {
+    "demoMode": {
+      "type": "boolean",
+      "label": "Demo Mode",
+      "default": false,
+      "description": "Use bundled e-commerce schema, data, and slow query. No database or Docker needed for config — Docker still required at runtime."
+    },
+    "schemaSource": {
+      "type": "enum",
+      "label": "Schema Source",
+      "options": ["introspect", "dump", "migrations"],
+      "default": "introspect",
+      "description": "How to load the database schema into the Docker harness."
+    },
     "dbUrl": {
       "type": "string",
       "label": "Postgres URL",
-      "required": true,
-      "placeholder": "postgres://user:pass@localhost:5432/db"
+      "required": false,
+      "placeholder": "postgres://user:pass@localhost:5432/db",
+      "description": "Postgres connection string. Required when schemaSource is introspect or seedFromSource is true."
     },
     "slowQuery": {
       "type": "string",
       "label": "Target Query",
-      "required": true,
-      "placeholder": "SELECT * FROM large_table WHERE..."
+      "required": false,
+      "placeholder": "SELECT * FROM large_table WHERE...",
+      "description": "SQL to optimize. Must be a read-only SELECT or WITH...SELECT with concrete values."
+    },
+    "schemaPath": {
+      "type": "string",
+      "label": "Schema Path",
+      "required": false,
+      "description": "Path to pg_dump schema or migrations directory. Required when schemaSource is dump or migrations."
+    },
+    "seedDataPath": {
+      "type": "string",
+      "label": "Seed Data Path",
+      "description": "SQL script or pg_dump data-only file to populate the harness (Tier 1)."
+    },
+    "seedFromSource": {
+      "type": "boolean",
+      "label": "Sample from Source",
+      "default": false,
+      "description": "Sample real rows from dbUrl instead of synthetic data (Tier 2)."
+    },
+    "postgresVersion": {
+      "type": "enum",
+      "label": "Postgres Version",
+      "options": ["14", "15", "16", "17"],
+      "default": "16"
     },
     "schemaFilter": {
       "type": "string_array",
       "label": "Include Tables",
       "maxItems": 20,
       "default": []
-    },
-    "dryRun": {
-      "type": "boolean",
-      "label": "Dry Run Only",
-      "default": false
     },
     "outputDir": {
       "type": "directory",
@@ -192,9 +228,9 @@
   },
   "setup": {
     "compatibilityGate": true,
-    "compatibilityTitle": "Postgres Connection Preflight",
-    "compatibilityDescription": "Verify DB connectivity and read schema metadata before starting.",
-    "checkLabel": "Verify Connection",
+    "compatibilityTitle": "Postgres Optimizer Preflight",
+    "compatibilityDescription": "Verify Docker availability and configuration before starting. Docker is required to spin up an isolated Postgres instance for benchmarking.",
+    "checkLabel": "Verify Setup",
     "fixLabel": "Setup Tuner Workspace",
     "allowMakeCompatible": true
   }
