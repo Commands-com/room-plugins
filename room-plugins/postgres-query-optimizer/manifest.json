@@ -1,0 +1,201 @@
+{
+  "id": "postgres_query_optimizer",
+  "name": "Postgres Query Optimizer",
+  "version": "1.0.0",
+  "orchestratorType": "postgres_query_optimizer",
+  "description": "Empirical SQL performance tuning: rewrite queries, propose indexes, and verify speedup with EXPLAIN ANALYZE",
+  "supportsQuorum": true,
+  "roles": {
+    "required": ["explorer", "builder", "auditor"],
+    "optional": [],
+    "forbidden": ["implementer", "reviewer", "worker"],
+    "minCount": {
+      "explorer": 1,
+      "builder": 1,
+      "auditor": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 4, "min": 1, "max": 10 },
+    "maxTurns": { "default": 60, "min": 4, "max": 500 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 14400000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 300000, "min": 10000, "max": 1800000 },
+    "pluginHookTimeoutMs": { "default": 60000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 60000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "explorer",
+    "turnFloorFormula": "1 + N"
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "currentPhase",
+        "label": "Phase",
+        "phases": [
+          "preflight",
+          "baseline",
+          "analysis",
+          "codegen",
+          "static_audit",
+          "execute_validate",
+          "explain_analyze",
+          "frontier_refine",
+          "complete"
+        ],
+        "phaseLabels": {
+          "preflight": "Preflight",
+          "baseline": "Baseline",
+          "analysis": "Analysis",
+          "codegen": "Codegen",
+          "static_audit": "Static Audit",
+          "execute_validate": "Validate",
+          "explain_analyze": "EXPLAIN ANALYZE",
+          "frontier_refine": "Refine",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "counter-group",
+        "key": "candidateSummary",
+        "label": "Strategies",
+        "layout": "row",
+        "counters": [
+          { "key": "proposed", "label": "Proposed", "color": "gray" },
+          { "key": "validated", "label": "Validated", "color": "blue" },
+          { "key": "benchmarked", "label": "Speedup", "color": "green" },
+          { "key": "frontier", "label": "Frontier", "color": "orange" },
+          { "key": "blocked", "label": "Risky", "color": "red" }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "cycleProgress",
+        "label": "Cycle Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "progress",
+        "key": "bestImprovementPct",
+        "label": "Best Speedup",
+        "format": "{value}%"
+      },
+      {
+        "type": "table",
+        "key": "frontier",
+        "label": "Frontier",
+        "columns": [
+          { "key": "strategyType", "label": "Type", "width": 120 },
+          { "key": "executionTimeMs", "label": "Time (ms)", "width": 110 },
+          { "key": "speedupPct", "label": "Speedup %", "width": 100 },
+          { "key": "indexSizeMb", "label": "Index Size", "width": 100 },
+          { "key": "status", "label": "Status", "width": 90 },
+          { "key": "owner", "label": "Builder", "width": 120 }
+        ],
+        "sortable": true
+      },
+      {
+        "type": "table",
+        "key": "candidates",
+        "label": "All Attempts",
+        "columns": [
+          { "key": "strategyType", "label": "Type", "width": 120 },
+          { "key": "executionTimeMs", "label": "Time (ms)", "width": 110 },
+          { "key": "speedupPct", "label": "Speedup %", "width": 100 },
+          { "key": "status", "label": "Status", "width": 90 },
+          { "key": "riskScore", "label": "Risk", "width": 80 },
+          { "key": "owner", "label": "Builder", "width": 120 },
+          { "key": "blockedReason", "label": "Reason", "width": 300 }
+        ],
+        "sortable": true
+      }
+    ]
+  },
+  "display": {
+    "typeLabel": "Query Optimizer",
+    "typeTag": "SQL",
+    "cycleNoun": "Cycle",
+    "reportTitle": "Postgres Query Optimization Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Analyzing slow queries and schema",
+      "fanOut": "Running EXPLAIN ANALYZE on candidates",
+      "singleTurn": "Worker optimizing query...",
+      "synthesis": "Ranking optimization frontier",
+      "planning": "Choosing next tuning strategy"
+    },
+    "defaultRoster": [
+      { "role": "explorer", "displayName": "Schema Analyst" },
+      { "role": "builder", "displayName": "Query Architect" },
+      { "role": "auditor", "displayName": "DBA Auditor" }
+    ],
+    "defaultAddRole": "explorer"
+  },
+  "report": {
+    "summaryMetrics": ["bestImprovementPct", "candidateSummary"],
+    "table": {
+      "metricKey": "candidates",
+      "columns": [
+        { "key": "strategyType", "label": "Type", "width": 120 },
+        { "key": "executionTimeMs", "label": "Execution (ms)", "width": 110 },
+        { "key": "speedupPct", "label": "Speedup %", "width": 100 },
+        { "key": "status", "label": "Status", "width": 90 },
+        { "key": "owner", "label": "Builder", "width": 120 },
+        { "key": "blockedReason", "label": "Notes", "width": 300 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "winnerQueries", "label": "Optimized SQL", "language": "sql" },
+      { "metricKey": "winnerIndexes", "label": "Proposed Indexes", "language": "sql" }
+    ]
+  },
+  "configSchema": {
+    "plannedCandidatesPerCycle": { "type": "integer", "min": 1, "max": 10, "default": 4 },
+    "promoteTopK": { "type": "integer", "min": 1, "max": 5, "default": 2 },
+    "maxRetestCandidates": { "type": "integer", "min": 1, "max": 3, "default": 1 },
+    "maxRiskScore": { "type": "integer", "min": 0, "max": 10, "default": 7 },
+    "targetImprovementPct": { "type": "number", "min": 0, "max": 1000, "default": 20 }
+  },
+  "roomConfigSchema": {
+    "dbUrl": {
+      "type": "string",
+      "label": "Postgres URL",
+      "required": true,
+      "placeholder": "postgres://user:pass@localhost:5432/db"
+    },
+    "slowQuery": {
+      "type": "string",
+      "label": "Target Query",
+      "required": true,
+      "placeholder": "SELECT * FROM large_table WHERE..."
+    },
+    "schemaFilter": {
+      "type": "string_array",
+      "label": "Include Tables",
+      "maxItems": 20,
+      "default": []
+    },
+    "dryRun": {
+      "type": "boolean",
+      "label": "Dry Run Only",
+      "default": false
+    },
+    "outputDir": {
+      "type": "directory",
+      "label": "Output Directory",
+      "default": ".commands/postgres-tuner"
+    }
+  },
+  "setup": {
+    "compatibilityGate": true,
+    "compatibilityTitle": "Postgres Connection Preflight",
+    "compatibilityDescription": "Verify DB connectivity and read schema metadata before starting.",
+    "checkLabel": "Verify Connection",
+    "fixLabel": "Setup Tuner Workspace",
+    "allowMakeCompatible": true
+  }
+}
