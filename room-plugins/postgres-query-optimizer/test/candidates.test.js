@@ -31,23 +31,41 @@ describe('isConfidentMeasurement', () => {
     expect(result.confidence).toBe('high');
   });
 
-  it('medium confidence: plan change + modest speedup', () => {
-    const result = isConfidentMeasurement({
+  it('medium confidence: plan change + modest speedup (needs retest)', () => {
+    const noRetest = isConfidentMeasurement({
       result: { cvPct: 5 },
       speedupPct: 50,
       planShapeChanged: true,
     });
-    expect(result.confident).toBe(true);
-    expect(result.confidence).toBe('medium');
+    expect(noRetest.confident).toBe(false);
+    expect(noRetest.needsRetest).toBe(true);
+
+    const retested = isConfidentMeasurement({
+      result: { cvPct: 5 },
+      speedupPct: 50,
+      planShapeChanged: true,
+      retested: true,
+    });
+    expect(retested.confident).toBe(true);
+    expect(retested.confidence).toBe('medium');
   });
 
-  it('accepts without plan change when speedup is very high', () => {
-    const result = isConfidentMeasurement({
+  it('accepts without plan change when speedup is very high (needs retest)', () => {
+    const noRetest = isConfidentMeasurement({
       result: { cvPct: 5 },
       speedupPct: 500,
       planShapeChanged: false,
     });
-    expect(result.confident).toBe(true);
+    expect(noRetest.confident).toBe(false);
+    expect(noRetest.needsRetest).toBe(true);
+
+    const retested = isConfidentMeasurement({
+      result: { cvPct: 5 },
+      speedupPct: 500,
+      planShapeChanged: false,
+      retested: true,
+    });
+    expect(retested.confident).toBe(true);
   });
 
   it('rejects low speedup without plan change unless retested', () => {
@@ -151,7 +169,9 @@ describe('recomputeFrontier', () => {
           result: { medianMs: 10, cvPct: 5 },
           riskScore: 3,
           resultParity: true,
+          parityChecked: true,
           planShapeChanged: true,
+          retested: true,
           status: 'benchmarked',
           approved: true,
         },
@@ -162,7 +182,9 @@ describe('recomputeFrontier', () => {
           result: { medianMs: 50, cvPct: 5 },
           riskScore: 3,
           resultParity: true,
+          parityChecked: true,
           planShapeChanged: true,
+          retested: true,
           status: 'benchmarked',
           approved: true,
         },
@@ -173,7 +195,9 @@ describe('recomputeFrontier', () => {
           result: { medianMs: 30, cvPct: 5 },
           riskScore: 2,
           resultParity: true,
+          parityChecked: true,
           planShapeChanged: true,
+          retested: true,
           status: 'benchmarked',
           approved: true,
         },
@@ -263,8 +287,9 @@ describe('evaluateImprovement', () => {
 });
 
 describe('chooseStopReason', () => {
-  it('returns benchmark_unstable when all candidates have high CV', () => {
+  it('returns benchmark_unstable when baseline CV is high after retest', () => {
     const state = {
+      baselines: { medianMs: 100, cvPct: 25, retested: true },
       candidates: [
         { result: { medianMs: 10, cvPct: 30 }, status: 'benchmarked' },
       ],

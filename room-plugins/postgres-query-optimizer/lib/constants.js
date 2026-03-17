@@ -33,7 +33,7 @@ export const DEFAULTS = Object.freeze({
   postgresVersion: '16',
   schemaSource: 'introspect',
   outputDir: '.commands/postgres-tuner',
-  containerMemory: '512m',
+  containerMemory: '1g',
   containerCpus: '2',
 });
 

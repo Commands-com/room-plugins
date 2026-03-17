@@ -1,5 +1,9 @@
+import { exec as execCb } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
+
+const execAsync = promisify(execCb);
 
 import { DEFAULTS, POSTGRES_VERSIONS } from './constants.js';
 import {
@@ -11,7 +15,7 @@ import {
   parseConnectionUrl,
   safeTrim,
 } from './utils.js';
-import { checkDockerAvailability } from './harness.js';
+import { checkDockerAvailability, detectSourceVersion } from './harness.js';
 
 // ---------------------------------------------------------------------------
 // Room config normalisation
@@ -27,11 +31,31 @@ export function normalizeRoomConfig(input = {}) {
   const schemaPath = safeTrim(input.schemaPath, 4000);
   const seedDataPath = safeTrim(input.seedDataPath, 4000);
   const seedFromSource = Boolean(input.seedFromSource);
-  const postgresVersion = POSTGRES_VERSIONS.includes(String(input.postgresVersion))
+  const _postgresVersionExplicit = POSTGRES_VERSIONS.includes(String(input.postgresVersion));
+  const postgresVersion = _postgresVersionExplicit
     ? String(input.postgresVersion)
     : DEFAULTS.postgresVersion;
   const schemaFilter = normalizeStringArray(input.schemaFilter || [], 20);
   const outputDir = safeTrim(input.outputDir || DEFAULTS.outputDir, 4000);
+  // scaleFactor comes as a string from roomConfigSchema; parse and clamp it
+  const rawScaleFactor = typeof input.scaleFactor === 'string'
+    ? Number(input.scaleFactor)
+    : input.scaleFactor;
+  const scaleFactor = clampInt(rawScaleFactor, 1000, 1000000, DEFAULTS.scaleFactor);
+
+  // Parse productionStats — accept JSON string or object
+  let productionStats = null;
+  if (input.productionStats) {
+    if (typeof input.productionStats === 'string') {
+      try {
+        productionStats = JSON.parse(input.productionStats);
+      } catch {
+        productionStats = null;
+      }
+    } else if (typeof input.productionStats === 'object') {
+      productionStats = input.productionStats;
+    }
+  }
 
   return {
     demoMode,
@@ -44,6 +68,9 @@ export function normalizeRoomConfig(input = {}) {
     postgresVersion,
     schemaFilter,
     outputDir,
+    scaleFactor,
+    productionStats,
+    _postgresVersionExplicit,
   };
 }
 
@@ -64,7 +91,6 @@ export function getConfig(ctx) {
     warmupRuns: clampInt(ctx?.orchestratorConfig?.warmupRuns, 1, 20, DEFAULTS.warmupRuns),
     benchmarkTrials: clampInt(ctx?.orchestratorConfig?.benchmarkTrials, 3, 50, DEFAULTS.benchmarkTrials),
     plateauCycles: clampInt(ctx?.orchestratorConfig?.plateauCycles, 1, 5, DEFAULTS.plateauCycles),
-    scaleFactor: clampInt(ctx?.orchestratorConfig?.scaleFactor, 1000, 1000000, DEFAULTS.scaleFactor),
     containerMemory: DEFAULTS.containerMemory,
     containerCpus: DEFAULTS.containerCpus,
     ...roomConfig,
@@ -75,14 +101,14 @@ export function getConfig(ctx) {
 // Compatibility checking
 // ---------------------------------------------------------------------------
 
-export function buildCompatibilityReport(config) {
+export async function buildCompatibilityReport(config) {
   const good = [];
   const missing = [];
   const warnings = [];
   const hardFailures = [];
 
   // Docker check
-  const docker = checkDockerAvailability();
+  const docker = await checkDockerAvailability();
   if (!docker.ok) {
     hardFailures.push({
       id: 'docker_missing',
@@ -145,6 +171,53 @@ export function buildCompatibilityReport(config) {
         good.push({ id: 'db_url', label: 'Database URL', details: `${parsed.host}:${parsed.port}/${parsed.database}` });
       }
     }
+
+    // Check for pg_dump availability (host or Docker fallback)
+    let hostPgDump = false;
+    try {
+      await execAsync('which pg_dump', { encoding: 'utf-8', timeout: 5000 });
+      hostPgDump = true;
+      good.push({ id: 'pg_dump', label: 'pg_dump', details: 'Available on host' });
+    } catch {
+      // Host pg_dump not available — check Docker fallback
+      const dockerOk = await checkDockerAvailability();
+      if (dockerOk.ok) {
+        good.push({ id: 'pg_dump', label: 'pg_dump', details: 'Not on host — Docker utility container fallback available' });
+      } else {
+        hardFailures.push({
+          id: 'pg_dump_missing',
+          label: 'pg_dump',
+          details: 'pg_dump is not available on the host and Docker is not available for the utility-container fallback',
+        });
+      }
+    }
+
+    // Detect source database version (host psql or Docker utility container fallback)
+    if (config.dbUrl) {
+      const versionResult = await detectSourceVersion(config.dbUrl, config.postgresVersion);
+      if (versionResult.ok && versionResult.version) {
+        const sourceMajor = versionResult.version;
+        if (config._postgresVersionExplicit && sourceMajor !== config.postgresVersion) {
+          // User explicitly chose a version that differs from source — warn
+          warnings.push({
+            id: 'version_mismatch',
+            label: 'Postgres Version Mismatch',
+            details: `Source database is v${sourceMajor} but harness is explicitly configured for v${config.postgresVersion}. Planner behavior may differ.`,
+          });
+        } else if (sourceMajor !== config.postgresVersion) {
+          // Auto-match: user did not explicitly set version, so we'll note the auto-match
+          good.push({ id: 'version_auto_match', label: 'Postgres Version', details: `Source v${sourceMajor} detected — harness will auto-match` });
+        } else {
+          good.push({ id: 'version_match', label: 'Postgres Version', details: `Source v${sourceMajor} matches harness` });
+        }
+      } else {
+        warnings.push({
+          id: 'version_detect_failed',
+          label: 'Version Detection',
+          details: versionResult.message || 'Could not detect source database version — ensure postgresVersion matches your source database',
+        });
+      }
+    }
   }
 
   if ((config.schemaSource === 'dump' || config.schemaSource === 'migrations') && !config.schemaPath) {
@@ -176,7 +249,7 @@ export function buildCompatibilityReport(config) {
 
   if (config.seedDataPath) {
     if (!fs.existsSync(config.seedDataPath)) {
-      warnings.push({
+      hardFailures.push({
         id: 'seed_path_invalid',
         label: 'Seed Data Path',
         details: `seedDataPath "${config.seedDataPath}" does not exist`,
@@ -184,11 +257,16 @@ export function buildCompatibilityReport(config) {
     } else {
       good.push({ id: 'seed_data', label: 'Seed Data Path', details: config.seedDataPath });
     }
-  } else if (!config.seedFromSource) {
+  } else if (config.seedFromSource) {
+    // Tier 2 sampling requires dbUrl (already validated above) — mark as ready
+    if (config.dbUrl) {
+      good.push({ id: 'seed_from_source', label: 'Tier 2 Sampling', details: `Will sample up to ${config.scaleFactor} rows per table from source` });
+    }
+  } else {
     warnings.push({
-      id: 'no_seed_data',
+      id: 'tier3_synthetic',
       label: 'Data Source',
-      details: 'No seedDataPath or seedFromSource configured — Tier 3 synthetic data will be used (less reliable)',
+      details: 'No data population method configured — will fall back to Tier 3 synthetic data generation. Benchmark results will be directional only. For reliable results, provide seedDataPath (Tier 1) or enable seedFromSource with dbUrl (Tier 2).',
     });
   }
 
@@ -197,7 +275,7 @@ export function buildCompatibilityReport(config) {
 
 export async function checkCompatibility(payload = {}) {
   const config = normalizeRoomConfig(payload.roomConfig || payload);
-  const report = buildCompatibilityReport(config);
+  const report = await buildCompatibilityReport(config);
   return { ok: true, report };
 }
 
@@ -219,7 +297,7 @@ export async function makeCompatible(payload = {}) {
     errors.push(err?.message || String(err));
   }
 
-  const report = buildCompatibilityReport(config);
+  const report = await buildCompatibilityReport(config);
   return {
     ok: true,
     applied: actions.length > 0,

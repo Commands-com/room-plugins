@@ -18,6 +18,8 @@ export function buildFrontierRows(state) {
         ? Number((candidate.indexSizeBytes / (1024 * 1024)).toFixed(2))
         : '',
       riskScore: Number.isFinite(candidate.riskScore) ? candidate.riskScore : '',
+      auditFindings: (candidate.auditFindings || []).length,
+      telemetryBacked: Boolean(candidate.telemetryAvailable),
       status: candidate.status,
       owner: candidate.owner || '',
     }));
@@ -35,6 +37,8 @@ export function buildCandidateRows(state) {
       : '',
     status: candidate.status,
     riskScore: Number.isFinite(candidate.riskScore) ? candidate.riskScore : '',
+    auditFindings: (candidate.auditFindings || []).length,
+    telemetryBacked: Boolean(candidate.telemetryAvailable),
     owner: candidate.owner || '',
     notes: candidate.rejectedReason || candidate.notes || '',
   }));
@@ -48,6 +52,25 @@ function countCandidateSummary(state) {
     frontier: state.frontierIds.length,
     rejected: state.candidates.filter((c) => c.status === 'rejected').length,
   };
+}
+
+function buildAuditSummaryLines(candidate) {
+  const lines = [];
+  const findings = candidate.auditFindings || [];
+  if (findings.length === 0) return lines;
+
+  const assessmentType = candidate.telemetryAvailable ? 'verified (production telemetry)' : 'heuristic';
+  lines.push(`-- Audit Assessment: ${assessmentType}`);
+
+  for (const finding of findings) {
+    const confidence = finding.confidence || 'heuristic';
+    const marker = confidence === 'verified' ? '✓' : '?';
+    lines.push(`--   [${marker} ${finding.severity || 'medium'}] ${finding.category || 'general'}: ${finding.detail || 'no detail'}`);
+    if (finding.recommendation) {
+      lines.push(`--     → ${finding.recommendation}`);
+    }
+  }
+  return lines;
 }
 
 function buildWinnerBlock(candidate, label) {
@@ -83,25 +106,27 @@ function buildWinnerBlock(candidate, label) {
   if (candidate.deployNotes) {
     lines.push(`-- ${candidate.deployNotes}`);
   }
+
+  // Plan divergence warning
+  if (candidate._planDivergenceWarning) {
+    lines.push('--');
+    lines.push('-- ⚠ PLAN DIVERGENCE: The harness query plan differs from the source DB.');
+    lines.push('-- Speedup was measured in a scaled-down harness — verify on production with');
+    lines.push('-- EXPLAIN (ANALYZE) after deploying. The actual speedup may differ.');
+  }
+
+  // Append audit findings with verified/heuristic distinction
+  const auditLines = buildAuditSummaryLines(candidate);
+  if (auditLines.length > 0) {
+    lines.push('--');
+    lines.push(...auditLines);
+  }
+
   return lines.join('\n');
 }
 
 function buildWinnerQueriesMetric(state) {
-  const rewriteWinnerId = state.bestByStrategyType?.rewrite;
-  if (!rewriteWinnerId) return null;
-  const winner = findCandidateById(state, rewriteWinnerId);
-  if (!winner) return null;
-  const content = buildWinnerBlock(winner, 'Rewrite Winner');
-  if (!content) return null;
-  return {
-    title: 'Optimized Query',
-    blocks: [{
-      title: `${winner.proposalId} — ${winner.strategyType}`,
-      subtitle: 'winner',
-      language: 'sql',
-      content,
-    }],
-  };
+  return buildWinnerQueriesWithSafe(state);
 }
 
 function buildWinnerIndexesMetric(state) {
@@ -111,15 +136,118 @@ function buildWinnerIndexesMetric(state) {
   if (!winner) return null;
   const content = buildWinnerBlock(winner, 'Index Winner');
   if (!content) return null;
+
+  const blocks = [{
+    title: `${winner.proposalId} — ${winner.strategyType}`,
+    subtitle: 'winner',
+    language: 'sql',
+    content,
+  }];
+
+  // If the winner exceeds risk threshold, also show the best safe alternative
+  const safeWinnerId = state.safeBestByStrategyType?.index;
+  if (safeWinnerId && safeWinnerId !== indexWinnerId) {
+    const safeWinner = findCandidateById(state, safeWinnerId);
+    if (safeWinner) {
+      const safeContent = buildWinnerBlock(safeWinner, 'Lower-Risk Alternative');
+      if (safeContent) {
+        blocks.push({
+          title: `${safeWinner.proposalId} — ${safeWinner.strategyType}`,
+          subtitle: 'lower risk',
+          language: 'sql',
+          content: safeContent,
+        });
+      }
+    }
+  }
+
   return {
     title: 'Proposed Index',
-    blocks: [{
-      title: `${winner.proposalId} — ${winner.strategyType}`,
-      subtitle: 'winner',
-      language: 'sql',
-      content,
-    }],
+    blocks,
   };
+}
+
+function buildWinnerQueriesWithSafe(state) {
+  const rewriteWinnerId = state.bestByStrategyType?.rewrite;
+  if (!rewriteWinnerId) return null;
+  const winner = findCandidateById(state, rewriteWinnerId);
+  if (!winner) return null;
+  const content = buildWinnerBlock(winner, 'Rewrite Winner');
+  if (!content) return null;
+
+  const blocks = [{
+    title: `${winner.proposalId} — ${winner.strategyType}`,
+    subtitle: 'winner',
+    language: 'sql',
+    content,
+  }];
+
+  const safeWinnerId = state.safeBestByStrategyType?.rewrite;
+  if (safeWinnerId && safeWinnerId !== rewriteWinnerId) {
+    const safeWinner = findCandidateById(state, safeWinnerId);
+    if (safeWinner) {
+      const safeContent = buildWinnerBlock(safeWinner, 'Lower-Risk Alternative');
+      if (safeContent) {
+        blocks.push({
+          title: `${safeWinner.proposalId} — ${safeWinner.strategyType}`,
+          subtitle: 'lower risk',
+          language: 'sql',
+          content: safeContent,
+        });
+      }
+    }
+  }
+
+  return {
+    title: 'Optimized Query',
+    blocks,
+  };
+}
+
+function buildBaselineRows(state) {
+  const b = state?.baselines;
+  if (!b) return [];
+
+  const rows = [];
+  if (Number.isFinite(b.medianMs)) rows.push({ metric: 'Median', value: `${b.medianMs.toFixed(2)} ms` });
+  if (Number.isFinite(b.p95Ms)) rows.push({ metric: 'P95', value: `${b.p95Ms.toFixed(2)} ms` });
+  if (Number.isFinite(b.cvPct)) rows.push({ metric: 'CV%', value: `${b.cvPct.toFixed(1)}%` });
+  if (Array.isArray(b.leafAccessNodes) && b.leafAccessNodes.length > 0) {
+    rows.push({ metric: 'Leaf Access', value: b.leafAccessNodes.join(', ') });
+  }
+  if (Array.isArray(b.planNodeSet) && b.planNodeSet.length > 0) {
+    rows.push({ metric: 'Plan Nodes', value: b.planNodeSet.join(', ') });
+  }
+  if (b.planStructureHash) rows.push({ metric: 'Plan Hash', value: b.planStructureHash });
+  if (Number.isFinite(b.sharedHitBlocks)) rows.push({ metric: 'Shared Hit Blocks', value: b.sharedHitBlocks.toLocaleString() });
+  if (Number.isFinite(b.sharedReadBlocks)) rows.push({ metric: 'Shared Read Blocks', value: b.sharedReadBlocks.toLocaleString() });
+  if (Array.isArray(b.trials) && b.trials.length > 0) {
+    rows.push({ metric: 'Trials', value: b.trials.map((t) => t.toFixed(2)).join(', ') + ' ms' });
+  }
+
+  // Actual rows loaded into harness
+  if (state.totalRowsLoaded) {
+    rows.push({ metric: 'Rows Loaded', value: state.totalRowsLoaded.toLocaleString() });
+  }
+
+  // Plan fidelity — use the preflight comparison result (authoritative,
+  // both sides normalized for parallelism) rather than re-comparing hashes
+  // from different code paths.
+  if (state.sourceBaseline) {
+    if (state.planDivergence) {
+      rows.push({ metric: 'Plan Fidelity', value: '⚠ DIVERGED — results may not transfer' });
+      if (state.planDivergence.onlyInSource?.length > 0) {
+        rows.push({ metric: 'Source-only Nodes', value: state.planDivergence.onlyInSource.join(', ') });
+      }
+      if (state.planDivergence.onlyInHarness?.length > 0) {
+        rows.push({ metric: 'Harness-only Nodes', value: state.planDivergence.onlyInHarness.join(', ') });
+      }
+    } else {
+      rows.push({ metric: 'Plan Fidelity', value: 'Matched (source = harness)' });
+    }
+  }
+
+  return rows;
 }
 
 export function emitStateMetrics(ctx, state) {
@@ -127,6 +255,14 @@ export function emitStateMetrics(ctx, state) {
   const baselineMs = Number.isFinite(state.baselines?.medianMs)
     ? Number(state.baselines.medianMs.toFixed(1))
     : null;
+
+  // Build data quality info for report consumers
+  const dataTierLabels = { 0: 'demo', 1: 'seed (Tier 1)', 2: 'sampled (Tier 2)', 3: 'synthetic (Tier 3)' };
+  const dataQuality = {
+    tier: state.dataTier != null ? state.dataTier : null,
+    tierLabel: dataTierLabels[state.dataTier] || 'unknown',
+    warnings: Array.isArray(state.dataWarnings) ? [...state.dataWarnings] : [],
+  };
 
   ctx.emitMetrics({
     currentPhase: {
@@ -143,6 +279,8 @@ export function emitStateMetrics(ctx, state) {
       max: 100,
     },
     baselineMs,
+    baselines: { rows: buildBaselineRows(state) },
+    dataQuality,
     frontier: { rows: buildFrontierRows(state) },
     candidates: { rows: buildCandidateRows(state) },
     winnerQueries: buildWinnerQueriesMetric(state),

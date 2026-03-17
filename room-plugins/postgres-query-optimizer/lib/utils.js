@@ -88,6 +88,46 @@ export function sanitizeSQL(sql, maxLen = 50000) {
   return sql.trim().slice(0, maxLen);
 }
 
+/**
+ * Extract probable table references from a SQL query.
+ * Uses a heuristic regex approach — finds identifiers after FROM and JOIN keywords.
+ * Returns lowercased, deduplicated table names (without schema prefix).
+ */
+export function extractQueryTableRefs(sql) {
+  if (!sql || typeof sql !== 'string') return [];
+  // Strip comments
+  const cleaned = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const refs = new Set();
+  // Match FROM/JOIN <table> patterns (handles optional schema.table)
+  const pattern = /\b(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_.]*)/gi;
+  let match;
+  while ((match = pattern.exec(cleaned)) !== null) {
+    const ref = match[1].toLowerCase();
+    // Skip subquery aliases and common keywords
+    if (['select', 'lateral', 'unnest', 'generate_series'].includes(ref)) continue;
+    // Store both the full ref and the unqualified name
+    refs.add(ref);
+    if (ref.includes('.')) {
+      refs.add(ref.split('.').pop());
+    }
+  }
+  return [...refs];
+}
+
+/**
+ * Quote a Postgres identifier (schema, table, column name) for safe use in SQL.
+ * Doubles any embedded double-quotes and wraps in double-quotes.
+ * Handles schema-qualified names like "public"."My Table".
+ */
+export function quoteIdent(name) {
+  if (!name || typeof name !== 'string') return '""';
+  // If schema-qualified (contains dot), quote each part separately
+  if (name.includes('.')) {
+    return name.split('.').map((part) => `"${part.replace(/"/g, '""')}"`).join('.');
+  }
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
 export function containerName(roomId) {
   const safe = String(roomId || 'pg').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
   return `pqo-harness-${safe}`;

@@ -30,6 +30,22 @@ export function selectActivePromotedProposals(state, config) {
 }
 
 // ---------------------------------------------------------------------------
+// Data warning section builder
+// ---------------------------------------------------------------------------
+
+function buildDataWarningsSection(state) {
+  const warnings = state.dataWarnings;
+  if (!Array.isArray(warnings) || warnings.length === 0) return [];
+  const lines = ['## ⚠ Data Quality Warnings'];
+  lines.push('The harness data was populated via Tier 3 synthetic generation. Keep these caveats in mind:');
+  for (const w of warnings) {
+    lines.push(`- ${w}`);
+  }
+  lines.push('');
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // Mutation hint generation (for cycle 2+)
 // ---------------------------------------------------------------------------
 
@@ -122,6 +138,8 @@ export function buildBaselineTargets(ctx, state, config) {
   const warmupRuns = config.warmupRuns || DEFAULTS.warmupRuns;
   const benchmarkTrials = config.benchmarkTrials || DEFAULTS.benchmarkTrials;
 
+  const dataWarningsSection = buildDataWarningsSection(state);
+
   return ctx.participants.filter((p) => p.role === 'builder').map((participant) => ({
     agentId: participant.agentId,
     message: [
@@ -138,6 +156,7 @@ export function buildBaselineTargets(ctx, state, config) {
       slowQuery,
       `\`\`\``,
       '',
+      ...dataWarningsSection,
       `## Protocol`,
       `1. Connect to the database using the connection string above.`,
       `2. Run the target query ${warmupRuns} time(s) as warmup (discard results).`,
@@ -159,6 +178,7 @@ export function buildBaselineTargets(ctx, state, config) {
       `    "baseline": {`,
       `      "medianMs": <number>,`,
       `      "p95Ms": <number>,`,
+      `      "cvPct": <number>,`,
       `      "leafAccessNodes": ["Seq Scan", ...],`,
       `      "planNodeSet": ["Sort", "Seq Scan", ...],`,
       `      "planStructureHash": "<string>",`,
@@ -217,6 +237,8 @@ export function buildDiscoveryTargets(ctx, state, config) {
     }
   }
 
+  const dataWarningsSection = buildDataWarningsSection(state);
+
   return ctx.participants.filter((p) => p.role === 'explorer').map((participant) => ({
     agentId: participant.agentId,
     message: [
@@ -236,6 +258,7 @@ export function buildDiscoveryTargets(ctx, state, config) {
       `## Baseline`,
       baselineInfo,
       '',
+      ...dataWarningsSection,
       `## Instructions`,
       `${schemaFilter}`,
       `1. Connect and examine the schema: \\d, \\di, pg_stat_user_tables, etc.`,
@@ -296,6 +319,8 @@ export function buildCycleTargets(ctx, state, config) {
     `Notes: ${p.notes || 'none'}`,
   ].filter(Boolean).join('\n')).join('\n\n');
 
+  const dataWarningsSection = buildDataWarningsSection(state);
+
   return ctx.participants.filter((p) => p.role === 'builder').map((participant) => ({
     agentId: participant.agentId,
     message: [
@@ -314,6 +339,7 @@ export function buildCycleTargets(ctx, state, config) {
       '',
       `## ${baselineInfo}`,
       '',
+      ...dataWarningsSection,
       `## Proposals to Benchmark`,
       proposalBlock,
       '',
@@ -378,6 +404,24 @@ export function buildAuditTargets(ctx, state, config) {
     c.indexSizeBytes ? `  index size: ${(c.indexSizeBytes / (1024 * 1024)).toFixed(2)}MB` : '',
   ].filter(Boolean).join(' ')).join('\n');
 
+  // Thread production telemetry data to auditor when available
+  const telemetrySection = [];
+  if (config.productionStats) {
+    telemetrySection.push('## Production Telemetry (AVAILABLE)');
+    telemetrySection.push('Production statistics are available for this database. Use this data to produce');
+    telemetrySection.push('"verified" confidence findings rather than "heuristic" findings.');
+    telemetrySection.push('Set `telemetryAvailable: true` and `confidence: "verified"` for findings backed by this data.');
+    telemetrySection.push('');
+    telemetrySection.push('```json');
+    telemetrySection.push(typeof config.productionStats === 'string'
+      ? config.productionStats
+      : JSON.stringify(config.productionStats, null, 2));
+    telemetrySection.push('```');
+    telemetrySection.push('');
+  }
+
+  const dataWarningsSection = buildDataWarningsSection(state);
+
   return ctx.participants.filter((p) => p.role === 'auditor').map((participant) => ({
     agentId: participant.agentId,
     message: [
@@ -386,13 +430,27 @@ export function buildAuditTargets(ctx, state, config) {
       `You CANNOT reject candidates based on performance — that's the frontier ranking's job.`,
       `You answer: "if you deploy this, what could go wrong?"`,
       '',
-      `## Risk Dimensions to Evaluate`,
-      `1. Lock contention: CREATE INDEX without CONCURRENTLY on a hot table`,
-      `2. Storage overhead: index size vs table size ratio`,
-      `3. Write amplification: index on frequently-updated column`,
-      `4. Query plan instability: plan depends on statistics that shift with data growth`,
-      `5. Migration complexity: requires downtime or multi-step deploy`,
+      ...dataWarningsSection,
+      `## Risk Score Guidelines`,
+      `Score FUNCTIONAL risk — things that could break production or silently degrade over time:`,
+      `- 1-3: Low — standard index, no unusual concerns`,
+      `- 4-6: Moderate — expression index on a high-churn column, large storage, partial index with tricky predicate`,
+      `- 7-8: High — rewrite changes semantics edge cases, index on a very hot write path, > 500MB storage`,
+      `- 9-10: Critical — risk of data corruption, locking a high-QPS table for minutes, unrecoverable change`,
       '',
+      `IMPORTANT: Standard deployment steps (use CONCURRENTLY, deploy outside a transaction, run ANALYZE after)`,
+      `are NOT risk — they are procedure. Every index requires these steps. Do NOT inflate the risk score`,
+      `for standard deployment procedure. Only score risk for things specific to THIS candidate that go`,
+      `beyond normal index deployment practice.`,
+      '',
+      `## Risk Dimensions to Evaluate`,
+      `1. Lock contention: only if the table has high write QPS AND the index build would be unusually slow`,
+      `2. Storage overhead: index size vs table size ratio — flag if > 50% of table size`,
+      `3. Write amplification: index on frequently-updated column (not just inserted)`,
+      `4. Query plan instability: plan depends on statistics that shift with data growth`,
+      `5. Migration complexity: only if the deploy requires non-standard steps beyond normal CONCURRENTLY`,
+      '',
+      ...telemetrySection,
       `## Candidates to Audit`,
       candidateSummary,
       '',
@@ -414,7 +472,7 @@ export function buildAuditTargets(ctx, state, config) {
       `          "recommendation": "..."`,
       `        }`,
       `      ],`,
-      `      "telemetryAvailable": false,`,
+      `      "telemetryAvailable": ${config.productionStats ? 'true' : 'false'},`,
       `      "approved": true,`,
       `      "deployNotes": "Safe to apply with CREATE INDEX CONCURRENTLY during low-traffic window."`,
       `    }`,
@@ -451,6 +509,74 @@ function buildSchemaRepairTargets(ctx, state, config) {
 }
 
 // ---------------------------------------------------------------------------
+// Retest prompt builder
+// ---------------------------------------------------------------------------
+
+export function buildRetestTargets(ctx, state, config) {
+  const connectionString = state.harnessState?.connectionString || 'postgres://harness:harness@localhost:5432/harness';
+  const slowQuery = config.demoMode
+    ? state.demoQuery || config.slowQuery
+    : config.slowQuery;
+  const warmupRuns = config.warmupRuns || DEFAULTS.warmupRuns;
+  // Double the trials for retest to improve statistical confidence
+  const benchmarkTrials = (config.benchmarkTrials || DEFAULTS.benchmarkTrials) * 2;
+
+  const retestCandidates = state._retestQueue || [];
+  const isBaselineRetest = state._baselineNeedsRetest && !state.baselines?.retested;
+
+  const retestBlock = retestCandidates.map((c, i) => [
+    `### Retest ${i + 1}: ${c.proposalId} (${c.strategyType})`,
+    `Apply SQL: ${c.applySQL}`,
+    `Rollback SQL: ${c.rollbackSQL || 'N/A'}`,
+    c.strategyType === 'rewrite' ? `Rewritten Query: ${c.targetQuery || c.applySQL}` : '',
+    `Previous speedup: ${c.speedupPct?.toFixed(1) || '?'}%`,
+  ].filter(Boolean).join('\n')).join('\n\n');
+
+  const dataWarningsSection = buildDataWarningsSection(state);
+
+  return ctx.participants.filter((p) => p.role === 'builder').map((participant) => ({
+    agentId: participant.agentId,
+    message: [
+      `You are the Builder (Query Architect) in a Postgres Query Optimization room.`,
+      `This is a RETEST round with DOUBLED trials (${benchmarkTrials}) for improved statistical confidence.`,
+      '',
+      `## Connection`,
+      `\`\`\``,
+      connectionString,
+      `\`\`\``,
+      '',
+      `## Target Query`,
+      `\`\`\`sql`,
+      slowQuery,
+      `\`\`\``,
+      '',
+      ...dataWarningsSection,
+      ...(isBaselineRetest ? [
+        `## BASELINE RETEST`,
+        `The baseline measurement had high CV (${state.baselines?.cvPct?.toFixed(1) || '?'}%).`,
+        `Re-run the baseline with ${benchmarkTrials} trials and report the updated cvPct.`,
+        '',
+      ] : []),
+      ...(retestCandidates.length > 0 ? [
+        `## Candidates to Retest`,
+        retestBlock,
+        '',
+      ] : []),
+      `## Protocol`,
+      `1. ${isBaselineRetest ? 'Re-run baseline: ' : ''}Run ${warmupRuns} warmup queries.`,
+      `2. Run EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${benchmarkTrials} times.`,
+      `3. Compute median, p95, and CV%. Report all metrics.`,
+      `4. For candidates, apply the change first, then benchmark, then rollback.`,
+      '',
+      `## Output Format`,
+      `Reply with JSON only, same format as previous rounds.`,
+      `Include "isBaseline": true for baseline results and "proposalId" for candidate results.`,
+      `Include "cvPct" in the baseline object.`,
+    ].join('\n'),
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Decision router
 // ---------------------------------------------------------------------------
 
@@ -469,6 +595,9 @@ export function buildPendingDecision(ctx, state, config) {
   }
   if (state.pendingFanOut === 'schema_repair') {
     return { type: 'fan_out', targets: buildSchemaRepairTargets(ctx, state, config) };
+  }
+  if (state.pendingFanOut === 'retest') {
+    return { type: 'fan_out', targets: buildRetestTargets(ctx, state, config) };
   }
   return null;
 }

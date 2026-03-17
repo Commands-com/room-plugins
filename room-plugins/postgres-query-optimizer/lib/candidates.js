@@ -11,40 +11,63 @@ export function isConfidentMeasurement(candidate) {
   const speedupPct = optionalFiniteNumber(candidate?.speedupPct) ?? 0;
   const planShapeChanged = Boolean(candidate?.planShapeChanged);
   const retested = Boolean(candidate?.retested);
+  const retestCount = candidate?.retestCount ?? 0;
 
   // CV too high → reject regardless of other factors
   if (Number.isFinite(cvPct) && cvPct > CONFIDENCE_THRESHOLDS.CV_DISCARD_THRESHOLD) {
     return {
       confident: false,
       confidence: 'low',
+      needsRetest: retestCount < 1,
       reason: `CV ${cvPct.toFixed(1)}% exceeds discard threshold of ${CONFIDENCE_THRESHOLDS.CV_DISCARD_THRESHOLD}%`,
     };
   }
 
   const highSpeedupThreshold = (CONFIDENCE_THRESHOLDS.HIGH_SPEEDUP_WITH_PLAN_CHANGE - 1) * 100;
   const acceptWithoutPlanChangeThreshold = (CONFIDENCE_THRESHOLDS.ACCEPT_WITHOUT_PLAN_CHANGE - 1) * 100;
+  const retestConfirmationThreshold = CONFIDENCE_THRESHOLDS.RETEST_CONFIRMATION_TOLERANCE;
 
   if (planShapeChanged) {
     if (speedupPct > highSpeedupThreshold) {
       return {
         confident: true,
         confidence: 'high',
+        needsRetest: false,
         reason: `Plan shape changed with ${speedupPct.toFixed(1)}% speedup (>${highSpeedupThreshold}% threshold)`,
       };
     }
+    // Plan changed but speedup is modest — require retest for confirmation
+    if (retested) {
+      return {
+        confident: true,
+        confidence: 'medium',
+        needsRetest: false,
+        reason: `Plan shape changed with ${speedupPct.toFixed(1)}% speedup, confirmed by retest`,
+      };
+    }
     return {
-      confident: true,
+      confident: false,
       confidence: 'medium',
-      reason: `Plan shape changed with ${speedupPct.toFixed(1)}% speedup; retest recommended for confirmation`,
+      needsRetest: true,
+      reason: `Plan shape changed with ${speedupPct.toFixed(1)}% speedup but below ${highSpeedupThreshold}% — retest required for confirmation`,
     };
   }
 
   // No plan shape change
   if (speedupPct > acceptWithoutPlanChangeThreshold) {
+    if (retested) {
+      return {
+        confident: true,
+        confidence: 'medium',
+        needsRetest: false,
+        reason: `No plan change but ${speedupPct.toFixed(1)}% speedup exceeds ${acceptWithoutPlanChangeThreshold}% threshold, confirmed by retest`,
+      };
+    }
     return {
-      confident: true,
+      confident: false,
       confidence: 'medium',
-      reason: `No plan change but ${speedupPct.toFixed(1)}% speedup exceeds ${acceptWithoutPlanChangeThreshold}% threshold`,
+      needsRetest: true,
+      reason: `No plan change but ${speedupPct.toFixed(1)}% speedup exceeds threshold — retest required for confirmation`,
     };
   }
 
@@ -53,6 +76,7 @@ export function isConfidentMeasurement(candidate) {
     return {
       confident: true,
       confidence: 'low',
+      needsRetest: false,
       reason: `No plan change and modest ${speedupPct.toFixed(1)}% speedup, but accepted after retest confirmation`,
     };
   }
@@ -60,6 +84,7 @@ export function isConfidentMeasurement(candidate) {
   return {
     confident: false,
     confidence: 'low',
+    needsRetest: speedupPct > 0,
     reason: `No plan change and only ${speedupPct.toFixed(1)}% speedup without retest confirmation`,
   };
 }
@@ -160,11 +185,13 @@ export function mergeCycleArtifacts(state, responses, config) {
           findings: [],
           approved: true,
           deployNotes: '',
+          telemetryAvailable: false,
           auditedByWorkerIds: [],
         };
         current.riskScore = Math.max(current.riskScore, audit.riskScore || 0);
         current.findings = current.findings.concat(audit.findings || []);
         current.approved = current.approved && audit.approved !== false;
+        current.telemetryAvailable = current.telemetryAvailable || Boolean(audit.telemetryAvailable);
         if (audit.deployNotes) {
           current.deployNotes = [current.deployNotes, audit.deployNotes].filter(Boolean).join(' | ');
         }
@@ -183,6 +210,7 @@ export function mergeCycleArtifacts(state, responses, config) {
         ...state.baselines,
         medianMs: baselineData.medianMs,
         p95Ms: baselineData.p95Ms,
+        cvPct: optionalFiniteNumber(baselineData.cvPct),
         leafAccessNodes: baselineData.leafAccessNodes || [],
         planNodeSet: baselineData.planNodeSet || [],
         planStructureHash: baselineData.planStructureHash || '',
@@ -261,7 +289,7 @@ export function mergeCycleArtifacts(state, responses, config) {
         : null,
       baseline: candidateBaseline,
       result: candidateResult,
-      resultParity: result.resultParity !== false,
+      resultParity: result.parityChecked ? result.resultParity === true : false,
       parityChecked: Boolean(result.parityChecked),
       speedupPct: Number.isFinite(speedupPct) ? Number(speedupPct.toFixed(1)) : null,
       planShapeChanged: false,
@@ -270,6 +298,7 @@ export function mergeCycleArtifacts(state, responses, config) {
       explainJSON: result.explainJSON || null,
       riskScore: audit.riskScore,
       auditFindings: audit.findings,
+      telemetryAvailable: Boolean(audit.telemetryAvailable),
       approved: audit.approved,
       deployNotes: audit.deployNotes,
       status: Number.isFinite(candidateMedianMs) ? 'benchmarked' : 'proposed',
@@ -284,7 +313,8 @@ export function mergeCycleArtifacts(state, responses, config) {
     // Determine confidence
     const confidence = isConfidentMeasurement(candidate);
     candidate.confidenceLevel = confidence.confidence;
-    if (!confidence.confident && candidate.status === 'benchmarked') {
+    candidate.needsRetest = Boolean(confidence.needsRetest);
+    if (!confidence.confident && !confidence.needsRetest && candidate.status === 'benchmarked') {
       candidate.status = 'rejected';
       candidate.rejectedReason = confidence.reason;
     }
@@ -294,14 +324,18 @@ export function mergeCycleArtifacts(state, responses, config) {
       candidate.status = candidate.status === 'rejected' ? 'rejected' : 'audited';
     }
 
-    // Reject if rewrite parity not checked
+    // Reject if rewrite parity not verified (must be both checked AND passing)
     if (
       strategyType === 'rewrite'
-      && !candidate.resultParity
       && candidate.status !== 'rejected'
     ) {
-      candidate.status = 'rejected';
-      candidate.rejectedReason = 'Rewrite result parity check failed';
+      if (!candidate.parityChecked) {
+        candidate.status = 'rejected';
+        candidate.rejectedReason = 'Rewrite result parity was not verified — parityChecked must be true';
+      } else if (!candidate.resultParity) {
+        candidate.status = 'rejected';
+        candidate.rejectedReason = 'Rewrite result parity check failed — results differ from original query';
+      }
     }
 
     state.candidates.push(candidate);
@@ -315,6 +349,7 @@ export function mergeCycleArtifacts(state, responses, config) {
     if (!candidate) continue;
     candidate.riskScore = Math.max(candidate.riskScore, audit.riskScore);
     candidate.auditFindings = candidate.auditFindings.concat(audit.findings);
+    candidate.telemetryAvailable = candidate.telemetryAvailable || Boolean(audit.telemetryAvailable);
     candidate.approved = candidate.approved && audit.approved;
     if (audit.deployNotes) {
       candidate.deployNotes = [candidate.deployNotes, audit.deployNotes].filter(Boolean).join(' | ');
@@ -363,16 +398,16 @@ export function recomputeFrontier(state, config) {
     }
   }
 
-  const maxRiskScore = config?.maxRiskScore ?? 7;
-
-  // Filter eligible candidates
+  // Filter eligible candidates for frontier — risk score does NOT exclude
+  // candidates from the frontier. High-risk candidates are shown with their
+  // risk score so the user can make an informed decision. Risk only gates
+  // auto-deployment recommendations, not visibility.
   const eligible = state.candidates.filter((candidate) => {
     if (candidate.status === 'rejected') return false;
     if (!Number.isFinite(candidate.speedupPct) || candidate.speedupPct <= 0) return false;
-    if (Number.isFinite(candidate.riskScore) && candidate.riskScore > maxRiskScore) return false;
 
-    // Rewrites must pass parity
-    if (candidate.strategyType === 'rewrite' && !candidate.resultParity) return false;
+    // Rewrites must have verified parity (both checked and passing)
+    if (candidate.strategyType === 'rewrite' && (!candidate.parityChecked || !candidate.resultParity)) return false;
 
     // Confidence check
     const confidence = isConfidentMeasurement(candidate);
@@ -381,9 +416,11 @@ export function recomputeFrontier(state, config) {
     return true;
   });
 
+  const maxRiskScore = config?.maxRiskScore ?? 7;
   const ranked = sortCandidatesForFrontier(eligible);
 
   const bestByStrategyType = {};
+  const safeBestByStrategyType = {};
   const frontierIds = [];
 
   for (const candidate of ranked) {
@@ -392,9 +429,15 @@ export function recomputeFrontier(state, config) {
       bestByStrategyType[bucket] = candidate.candidateId;
       frontierIds.push(candidate.candidateId);
     }
+    // Track best candidate that's under the risk threshold
+    if (!safeBestByStrategyType[bucket]
+      && (!Number.isFinite(candidate.riskScore) || candidate.riskScore <= maxRiskScore)) {
+      safeBestByStrategyType[bucket] = candidate.candidateId;
+    }
   }
 
   state.bestByStrategyType = bestByStrategyType;
+  state.safeBestByStrategyType = safeBestByStrategyType;
   state.frontierIds = frontierIds;
 
   // Update statuses
@@ -437,15 +480,17 @@ export function evaluateImprovement(state) {
 // ---------------------------------------------------------------------------
 
 export function chooseStopReason(state, config, limits) {
-  // 1. benchmark_unstable: all benchmarked candidates have high CV
-  const benchmarked = state.candidates.filter(
-    (c) => Number.isFinite(c.result?.medianMs) && c.status !== 'rejected',
-  );
-  if (benchmarked.length > 0) {
-    const allUnstable = benchmarked.every(
-      (c) => Number.isFinite(c.result?.cvPct) && c.result.cvPct > 25,
-    );
-    if (allUnstable) return 'benchmark_unstable';
+  // 1. benchmark_unstable: baseline CV is too high even after retesting
+  //    The spec defines this based on baseline measurement stability, not candidate CVs
+  const baselineCvPct = optionalFiniteNumber(state.baselines?.cvPct);
+  const baselineRetested = Boolean(state.baselines?.retested);
+  if (Number.isFinite(baselineCvPct) && baselineCvPct > CONFIDENCE_THRESHOLDS.CV_DISCARD_THRESHOLD) {
+    // If baseline is unstable and has already been retested with doubled trials, stop
+    if (baselineRetested) {
+      return 'benchmark_unstable';
+    }
+    // Mark that baseline needs retesting with doubled trials
+    state._baselineNeedsRetest = true;
   }
 
   // 2. cycle_limit
@@ -468,6 +513,186 @@ export function chooseStopReason(state, config, limits) {
   if (state.plateauCount >= plateauCycles) return 'plateau';
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Retest result merging — updates existing candidates instead of creating new ones
+// ---------------------------------------------------------------------------
+
+export function mergeRetestResults(state, responses, config) {
+  const tolerance = CONFIDENCE_THRESHOLDS.RETEST_CONFIRMATION_TOLERANCE;
+
+  // Parse all retest responses
+  for (const response of responses) {
+    const worker = {
+      agentId: response.agentId,
+      assignedLane: state.lanesByAgentId[response.agentId] || 'builder',
+    };
+    const envelope = parseWorkerEnvelope(response.response || '', worker, config);
+
+    // Process baseline retest
+    for (const result of envelope.results) {
+      if (result.isBaseline) {
+        const retestMedian = optionalFiniteNumber(result.baseline?.medianMs);
+        const retestCvPct = optionalFiniteNumber(result.baseline?.cvPct);
+        if (Number.isFinite(retestMedian) && retestMedian > 0 && state.baselines) {
+          state.baselines.retestMedianMs = retestMedian;
+          state.baselines.retestCvPct = retestCvPct;
+          state.baselines.retested = true;
+
+          // Compare retest to original within tolerance
+          const origMedian = optionalFiniteNumber(state.baselines.medianMs);
+          if (Number.isFinite(origMedian) && origMedian > 0) {
+            const driftPct = Math.abs(retestMedian - origMedian) / origMedian * 100;
+            state.baselines.retestDriftPct = Number(driftPct.toFixed(1));
+            // Accept retest as the authoritative measurement
+            state.baselines.medianMs = retestMedian;
+            state.baselines.p95Ms = optionalFiniteNumber(result.baseline?.p95Ms) ?? state.baselines.p95Ms;
+            state.baselines.cvPct = retestCvPct ?? state.baselines.cvPct;
+          }
+          state._baselineNeedsRetest = false;
+        }
+        continue;
+      }
+
+      // Process candidate retests — match to existing candidates
+      const existing = state.candidates.find(
+        (c) => c.proposalId === result.proposalId && c.status !== 'rejected',
+      );
+
+      // New candidate proposed during retest (builder refined/combined strategies)
+      if (!existing) {
+        const candidateMedianMs = optionalFiniteNumber(result.candidate?.medianMs ?? result.medianMs);
+        if (!Number.isFinite(candidateMedianMs)) continue;
+
+        const baselineMedianMs = optionalFiniteNumber(state.baselines?.medianMs);
+        let speedupPct = optionalFiniteNumber(result.speedupPct);
+        if (!Number.isFinite(speedupPct) && Number.isFinite(candidateMedianMs) && Number.isFinite(baselineMedianMs) && baselineMedianMs > 0) {
+          speedupPct = ((baselineMedianMs - candidateMedianMs) / baselineMedianMs) * 100;
+        }
+
+        const newCandidate = {
+          candidateId: result.proposalId || `retest-candidate-${state.candidates.length + 1}`,
+          proposalId: result.proposalId || '',
+          strategyType: result.applySQL?.match(/CREATE\s+INDEX/i) ? 'index' : 'rewrite',
+          cycleIndex: state.cycleIndex,
+          applySQL: result.applySQL || '',
+          rollbackSQL: result.rollbackSQL || '',
+          deploySQL: result.deploySQL || '',
+          targetQuery: null,
+          baseline: {
+            medianMs: baselineMedianMs,
+            p95Ms: optionalFiniteNumber(state.baselines?.p95Ms),
+            leafAccessNodes: state.baselines?.leafAccessNodes || [],
+            planNodeSet: state.baselines?.planNodeSet || [],
+            planStructureHash: state.baselines?.planStructureHash || '',
+          },
+          result: {
+            medianMs: candidateMedianMs,
+            p95Ms: optionalFiniteNumber(result.candidate?.p95Ms ?? result.p95Ms),
+            cvPct: optionalFiniteNumber(result.candidate?.cvPct ?? result.cvPct),
+            leafAccessNodes: result.candidate?.leafAccessNodes || [],
+            planNodeSet: result.candidate?.planNodeSet || [],
+            planStructureHash: result.candidate?.planStructureHash || '',
+          },
+          resultParity: result.parityChecked ? result.resultParity === true : false,
+          parityChecked: Boolean(result.parityChecked),
+          speedupPct: Number.isFinite(speedupPct) ? Number(speedupPct.toFixed(1)) : null,
+          indexSizeBytes: optionalFiniteNumber(result.indexSizeBytes),
+          explainJSON: result.explainJSON || null,
+          riskScore: 5,
+          auditFindings: [],
+          approved: true,
+          status: 'benchmarked',
+          rejectedReason: null,
+          owner: result.implementedByWorkerId || 'builder',
+          notes: result.notes || 'Proposed during frontier refinement',
+        };
+
+        // Determine confidence
+        newCandidate.planShapeChanged = determinePlanShapeChanged(newCandidate);
+        const confidence = isConfidentMeasurement(newCandidate);
+        newCandidate.confidenceLevel = confidence.confidence;
+        newCandidate.needsRetest = Boolean(confidence.needsRetest);
+
+        state.candidates.push(newCandidate);
+        continue;
+      }
+
+      const retestMedian = optionalFiniteNumber(result.candidate?.medianMs ?? result.medianMs);
+      const retestCvPct = optionalFiniteNumber(result.candidate?.cvPct ?? result.cvPct);
+      if (!Number.isFinite(retestMedian)) continue;
+
+      // Store both original and retest measurements on the same record
+      existing.retestResult = {
+        medianMs: retestMedian,
+        p95Ms: optionalFiniteNumber(result.candidate?.p95Ms ?? result.p95Ms),
+        cvPct: retestCvPct,
+      };
+
+      // Compare retest to original within confirmation tolerance
+      const origMedian = optionalFiniteNumber(existing.result?.medianMs);
+      if (Number.isFinite(origMedian) && origMedian > 0) {
+        const driftPct = Math.abs(retestMedian - origMedian) / origMedian * 100;
+        existing.retestDriftPct = Number(driftPct.toFixed(1));
+
+        if (driftPct <= tolerance) {
+          // Retest corroborates original — mark as confirmed
+          existing.retested = true;
+          existing.retestCount = (existing.retestCount || 0) + 1;
+          existing.needsRetest = false;
+
+          // Use the better (lower CV) measurement as authoritative
+          if (Number.isFinite(retestCvPct) && retestCvPct < (existing.result.cvPct ?? Infinity)) {
+            existing.result.medianMs = retestMedian;
+            existing.result.p95Ms = existing.retestResult.p95Ms ?? existing.result.p95Ms;
+            existing.result.cvPct = retestCvPct;
+          }
+
+          // Recompute speedup against current baseline
+          const baselineMedian = optionalFiniteNumber(state.baselines?.medianMs);
+          if (Number.isFinite(baselineMedian) && baselineMedian > 0) {
+            existing.speedupPct = Number(
+              (((baselineMedian - existing.result.medianMs) / baselineMedian) * 100).toFixed(1),
+            );
+          }
+
+          // Recompute confidence now that retested=true
+          const confidence = isConfidentMeasurement(existing);
+          existing.confidenceLevel = confidence.confidence;
+          existing.needsRetest = Boolean(confidence.needsRetest);
+        } else {
+          // Retest does NOT corroborate — measurement is unstable
+          existing.retested = false;
+          existing.retestCount = (existing.retestCount || 0) + 1;
+          existing.needsRetest = false; // Don't retest again
+          existing.status = 'rejected';
+          existing.rejectedReason = `Retest measurement drifted ${driftPct.toFixed(1)}% (tolerance ${tolerance}%) — result not reproducible`;
+        }
+      } else {
+        // No original measurement to compare — accept retest as-is
+        existing.retested = true;
+        existing.retestCount = (existing.retestCount || 0) + 1;
+        existing.needsRetest = false;
+        existing.result.medianMs = retestMedian;
+        existing.result.cvPct = retestCvPct;
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Retest selection
+// ---------------------------------------------------------------------------
+
+export function selectRetestCandidates(state, config) {
+  const maxRetest = config?.maxRetestCandidates ?? 1;
+  const candidates = state.candidates.filter(
+    (c) => c.needsRetest && !c.retested && c.status !== 'rejected',
+  );
+  // Sort by speedup desc — retest the most promising first
+  candidates.sort((a, b) => (b.speedupPct || 0) - (a.speedupPct || 0));
+  return candidates.slice(0, maxRetest);
 }
 
 // ---------------------------------------------------------------------------

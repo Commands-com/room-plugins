@@ -76,6 +76,7 @@ function normalizeBuilderResult(result, config, workerId) {
     baseline: {
       medianMs: optionalFiniteNumber(result?.baseline?.medianMs),
       p95Ms: optionalFiniteNumber(result?.baseline?.p95Ms),
+      cvPct: optionalFiniteNumber(result?.baseline?.cvPct),
       leafAccessNodes: normalizeStringArray(
         result?.baseline?.leafAccessNodes,
         20,
@@ -123,7 +124,7 @@ function normalizeBuilderResult(result, config, workerId) {
       ),
     },
 
-    resultParity: result?.resultParity !== false,
+    resultParity: result?.parityChecked ? result?.resultParity === true : undefined,
     parityChecked: Boolean(result?.parityChecked),
     speedupPct: optionalFiniteNumber(result?.speedupPct),
     indexSizeBytes: optionalFiniteNumber(result?.indexSizeBytes),

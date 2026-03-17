@@ -20,7 +20,7 @@
     "maxTurns": { "default": 120, "min": 4, "max": 2000 },
     "maxDurationMs": { "default": 14400000, "min": 60000, "max": 43200000 },
     "maxFailures": { "default": 6, "min": 1, "max": 20 },
-    "agentTimeoutMs": { "default": 1800000, "min": 10000, "max": 3600000 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
     "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 600000 },
     "llmTimeoutMs": { "default": 120000, "min": 10000, "max": 600000 },
     "turnFloorRole": "explorer",

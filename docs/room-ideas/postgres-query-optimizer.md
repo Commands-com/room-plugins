@@ -916,7 +916,7 @@ mutation hints:
   "maxTurns": { "default": 60, "min": 4, "max": 500 },
   "maxDurationMs": { "default": 3600000, "min": 60000, "max": 14400000 },
   "maxFailures": { "default": 5, "min": 1, "max": 20 },
-  "agentTimeoutMs": { "default": 300000, "min": 10000, "max": 1800000 },
+  "agentTimeoutMs": { "default": 1800000, "min": 10000, "max": 3600000 },
   "pluginHookTimeoutMs": { "default": 60000, "min": 5000, "max": 300000 },
   "llmTimeoutMs": { "default": 60000, "min": 10000, "max": 300000 }
 }
