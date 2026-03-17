@@ -6,6 +6,7 @@ export function buildFrontierRows(state) {
     .map((candidateId) => findCandidateById(state, candidateId))
     .filter(Boolean)
     .map((candidate) => ({
+      cycle: candidate.cycleIndex ?? '',
       strategyType: candidate.strategyType,
       proposalId: candidate.proposalId,
       medianMs: Number.isFinite(candidate.result?.medianMs)
@@ -27,6 +28,7 @@ export function buildFrontierRows(state) {
 
 export function buildCandidateRows(state) {
   return sortCandidatesForFrontier(state.candidates).map((candidate) => ({
+    cycle: candidate.cycleIndex ?? '',
     strategyType: candidate.strategyType,
     proposalId: candidate.proposalId,
     medianMs: Number.isFinite(candidate.result?.medianMs)
@@ -125,8 +127,53 @@ function buildWinnerBlock(candidate, label) {
   return lines.join('\n');
 }
 
+function buildSolutionsMetric(state) {
+  const frontierSet = new Set(state.frontierIds || []);
+
+  // All candidates that have SQL, sorted by cycle then speedup desc
+  const withSQL = state.candidates.filter(
+    (c) => c.applySQL || c.targetQuery || c.deploySQL,
+  );
+  if (withSQL.length === 0) return null;
+
+  withSQL.sort((a, b) => {
+    if ((a.cycleIndex ?? 0) !== (b.cycleIndex ?? 0)) return (a.cycleIndex ?? 0) - (b.cycleIndex ?? 0);
+    return (b.speedupPct ?? 0) - (a.speedupPct ?? 0);
+  });
+
+  const blocks = withSQL.map((candidate) => {
+    const content = buildWinnerBlock(candidate, candidate.proposalId || candidate.candidateId);
+    if (!content) return null;
+
+    const tags = [];
+    if (frontierSet.has(candidate.candidateId)) tags.push('frontier');
+    if (candidate.status === 'rejected') tags.push('rejected');
+    else if (candidate.status) tags.push(candidate.status);
+    const cycleTag = candidate.cycleIndex != null ? `cycle ${candidate.cycleIndex}` : '';
+    const subtitle = [cycleTag, ...tags].filter(Boolean).join(' · ');
+
+    return {
+      title: `${candidate.proposalId || candidate.candidateId} — ${candidate.strategyType}`,
+      subtitle,
+      language: 'sql',
+      content,
+    };
+  }).filter(Boolean);
+
+  if (blocks.length === 0) return null;
+  return { title: 'Solutions', blocks };
+}
+
+// Keep winner metrics for the final report code blocks
 function buildWinnerQueriesMetric(state) {
-  return buildWinnerQueriesWithSafe(state);
+  const rewriteWinnerId = state.bestByStrategyType?.rewrite;
+  if (!rewriteWinnerId) return null;
+  const winner = findCandidateById(state, rewriteWinnerId);
+  if (!winner) return null;
+  const content = buildWinnerBlock(winner, 'Rewrite Winner');
+  if (!content) return null;
+  const cycleTag = winner.cycleIndex != null ? ` · cycle ${winner.cycleIndex}` : '';
+  return { title: 'Optimized Query', blocks: [{ title: `${winner.proposalId} — rewrite`, subtitle: `winner${cycleTag}`, language: 'sql', content }] };
 }
 
 function buildWinnerIndexesMetric(state) {
@@ -136,72 +183,8 @@ function buildWinnerIndexesMetric(state) {
   if (!winner) return null;
   const content = buildWinnerBlock(winner, 'Index Winner');
   if (!content) return null;
-
-  const blocks = [{
-    title: `${winner.proposalId} — ${winner.strategyType}`,
-    subtitle: 'winner',
-    language: 'sql',
-    content,
-  }];
-
-  // If the winner exceeds risk threshold, also show the best safe alternative
-  const safeWinnerId = state.safeBestByStrategyType?.index;
-  if (safeWinnerId && safeWinnerId !== indexWinnerId) {
-    const safeWinner = findCandidateById(state, safeWinnerId);
-    if (safeWinner) {
-      const safeContent = buildWinnerBlock(safeWinner, 'Lower-Risk Alternative');
-      if (safeContent) {
-        blocks.push({
-          title: `${safeWinner.proposalId} — ${safeWinner.strategyType}`,
-          subtitle: 'lower risk',
-          language: 'sql',
-          content: safeContent,
-        });
-      }
-    }
-  }
-
-  return {
-    title: 'Proposed Index',
-    blocks,
-  };
-}
-
-function buildWinnerQueriesWithSafe(state) {
-  const rewriteWinnerId = state.bestByStrategyType?.rewrite;
-  if (!rewriteWinnerId) return null;
-  const winner = findCandidateById(state, rewriteWinnerId);
-  if (!winner) return null;
-  const content = buildWinnerBlock(winner, 'Rewrite Winner');
-  if (!content) return null;
-
-  const blocks = [{
-    title: `${winner.proposalId} — ${winner.strategyType}`,
-    subtitle: 'winner',
-    language: 'sql',
-    content,
-  }];
-
-  const safeWinnerId = state.safeBestByStrategyType?.rewrite;
-  if (safeWinnerId && safeWinnerId !== rewriteWinnerId) {
-    const safeWinner = findCandidateById(state, safeWinnerId);
-    if (safeWinner) {
-      const safeContent = buildWinnerBlock(safeWinner, 'Lower-Risk Alternative');
-      if (safeContent) {
-        blocks.push({
-          title: `${safeWinner.proposalId} — ${safeWinner.strategyType}`,
-          subtitle: 'lower risk',
-          language: 'sql',
-          content: safeContent,
-        });
-      }
-    }
-  }
-
-  return {
-    title: 'Optimized Query',
-    blocks,
-  };
+  const cycleTag = winner.cycleIndex != null ? ` · cycle ${winner.cycleIndex}` : '';
+  return { title: 'Proposed Index', blocks: [{ title: `${winner.proposalId} — index`, subtitle: `winner${cycleTag}`, language: 'sql', content }] };
 }
 
 function buildBaselineRows(state) {
@@ -283,6 +266,7 @@ export function emitStateMetrics(ctx, state) {
     dataQuality,
     frontier: { rows: buildFrontierRows(state) },
     candidates: { rows: buildCandidateRows(state) },
+    solutions: buildSolutionsMetric(state),
     winnerQueries: buildWinnerQueriesMetric(state),
     winnerIndexes: buildWinnerIndexesMetric(state),
   });

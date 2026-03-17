@@ -95,10 +95,17 @@
         "format": "{value}%"
       },
       {
+        "type": "code-blocks",
+        "key": "solutions",
+        "label": "Solutions",
+        "language": "sql"
+      },
+      {
         "type": "table",
         "key": "frontier",
         "label": "Frontier",
         "columns": [
+          { "key": "cycle", "label": "Cycle", "width": 50 },
           { "key": "strategyType", "label": "Type", "width": 100 },
           { "key": "proposalId", "label": "Proposal", "width": 180 },
           { "key": "medianMs", "label": "Time (ms)", "width": 100 },
@@ -115,6 +122,7 @@
         "key": "candidates",
         "label": "All Attempts",
         "columns": [
+          { "key": "cycle", "label": "Cycle", "width": 50 },
           { "key": "strategyType", "label": "Type", "width": 100 },
           { "key": "proposalId", "label": "Proposal", "width": 180 },
           { "key": "medianMs", "label": "Time (ms)", "width": 100 },
@@ -157,6 +165,7 @@
     "table": {
       "metricKey": "candidates",
       "columns": [
+        { "key": "cycle", "label": "Cycle", "width": 50 },
         { "key": "strategyType", "label": "Type", "width": 120 },
         { "key": "medianMs", "label": "Execution (ms)", "width": 110 },
         { "key": "speedupPct", "label": "Speedup %", "width": 100 },
