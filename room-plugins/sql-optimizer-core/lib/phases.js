@@ -29,7 +29,7 @@ export function advancePhase(state, nextPhase) {
   }
 }
 
-export function derivePartialPhase(state, event, config) {
+export function derivePartialPhase(state, event, config, engine) {
   const lane = state.lanesByAgentId[event?.agentId] || 'builder';
 
   if (lane === 'auditor') {
@@ -41,7 +41,7 @@ export function derivePartialPhase(state, event, config) {
       agentId: event?.agentId || 'worker',
       assignedLane: lane,
     };
-    const envelope = parseWorkerEnvelope(event?.detail?.response || '', worker, config);
+    const envelope = parseWorkerEnvelope(event?.detail?.response || '', worker, config, engine);
     const hasBenchmarkResults = envelope.results.some((result) =>
       Number.isFinite(result?.candidate?.medianMs)
       || Number.isFinite(result?.speedupPct)
@@ -54,7 +54,12 @@ export function derivePartialPhase(state, event, config) {
   return null;
 }
 
-export function createInitialState(ctx) {
+/**
+ * Create the initial orchestrator state.
+ * @param {object} ctx — room context (participants, etc.)
+ * @param {object} [engineState] — engine-specific initial state fields
+ */
+export function createInitialState(ctx, engineState) {
   return {
     phase: PHASES.PREFLIGHT,
     reachedPhases: [PHASES.PREFLIGHT],
@@ -64,21 +69,20 @@ export function createInitialState(ctx) {
     workerCount: ctx.participants.filter((p) =>
       ['explorer', 'builder', 'auditor'].includes(p.role),
     ).length,
-    // Harness
-    harnessState: null,      // { containerId, containerName, port, snapshotPath }
-    demoMode: false,
-    dataTier: null,          // 0=demo, 1=seed, 2=sampled, 3=synthetic
     // Search
     proposalBacklog: [],
     activePromotedProposals: [],
     discoveryNotes: [],
     candidates: [],
-    baselines: {},           // { medianMs, p95Ms, leafAccessNodes, planNodeSet, planStructureHash, ... }
+    baselines: {},
     frontierIds: [],
-    bestByStrategyType: {},  // { index: candidateId, rewrite: candidateId }
+    bestByStrategyType: {},
+    safeBestByStrategyType: {},
     pendingFanOut: null,
     schemaRepairBuilderResponses: [],
     plateauCount: 0,
     bestImprovementPct: 0,
+    // Engine-specific fields
+    ...engineState,
   };
 }

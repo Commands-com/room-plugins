@@ -1,13 +1,12 @@
-import { STRATEGY_TYPES } from './constants.js';
 import { clampInt, optionalFiniteNumber, normalizeStringArray, safeTrim } from './utils.js';
 
 // ---------------------------------------------------------------------------
-// JSON extraction (same approach as FFT autotune)
+// JSON extraction (engine-agnostic)
 // ---------------------------------------------------------------------------
 
 const MAX_EXTRACT_LEN = 512 * 1024;
 
-function extractJson(text) {
+export function extractJson(text) {
   const raw = typeof text === 'string' ? text.trim().slice(0, MAX_EXTRACT_LEN) : '';
   if (!raw) return null;
 
@@ -33,21 +32,97 @@ function extractJson(text) {
   for (const candidate of candidates) {
     try { return JSON.parse(candidate); } catch {}
   }
+
+  // Truncated JSON repair: LLM output may have been cut off mid-response.
+  // Try to salvage by closing open strings, arrays, and objects.
+  if (firstBrace >= 0) {
+    const truncated = raw.slice(firstBrace);
+    const repaired = repairTruncatedJson(truncated);
+    if (repaired) {
+      try { return JSON.parse(repaired); } catch {}
+    }
+  }
+
   return null;
 }
 
+/**
+ * Attempt to close a truncated JSON string so it becomes parseable.
+ * Walks the string tracking nesting depth and open string state,
+ * then appends the necessary closing tokens.
+ */
+function repairTruncatedJson(text) {
+  if (!text || text.length < 2) return null;
+
+  let inString = false;
+  let escaped = false;
+  const stack = []; // tracks '{' and '['
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.length > 0 && stack[stack.length - 1] === ch) stack.pop();
+    }
+  }
+
+  // Nothing to close — either already valid or not JSON
+  if (stack.length === 0) return null;
+
+  // Trim trailing partial tokens: incomplete key/value after last comma or colon
+  let trimmed = text;
+
+  // If we're inside a string, close it
+  if (inString) {
+    trimmed += '"';
+  }
+
+  // Remove trailing partial key-value (e.g. `"key": "truncated value"` after last complete pair)
+  // Find the last complete value boundary before the truncation
+  const lastCompleteComma = trimmed.lastIndexOf(',');
+  const lastCompleteBrace = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
+  const lastColon = trimmed.lastIndexOf(':');
+
+  // If the last colon is after the last comma/brace, we have an incomplete key-value pair
+  // Trim back to the last comma and remove it, or to the last opening brace
+  if (lastColon > Math.max(lastCompleteComma, lastCompleteBrace)) {
+    // We're in an incomplete "key": value — try to keep what we have
+    // The string close above should help, but we may have a partial number/bool
+    // Just try closing as-is first
+  }
+
+  // Close all open brackets/braces in reverse order
+  const suffix = stack.reverse().join('');
+  return trimmed + suffix;
+}
+
 // ---------------------------------------------------------------------------
-// Candidate proposal normalisation (explorer output)
+// Candidate proposal normalisation
 // ---------------------------------------------------------------------------
 
-function normalizeCandidateProposal(proposal, config, workerId) {
+function normalizeCandidateProposal(proposal, config, workerId, engine) {
+  const strategyTypes = engine?.strategyTypes || ['index', 'rewrite'];
+  const defaultStrategy = engine?.defaultStrategyType || strategyTypes[0] || 'index';
+
   return {
     proposalId:
       safeTrim(proposal?.proposalId || proposal?.id, 120) ||
       `proposal-${Date.now()}`,
-    strategyType: STRATEGY_TYPES.includes(safeTrim(proposal?.strategyType, 20))
+    strategyType: strategyTypes.includes(safeTrim(proposal?.strategyType, 20))
       ? safeTrim(proposal?.strategyType, 20)
-      : 'index',
+      : defaultStrategy,
     applySQL:
       safeTrim(proposal?.applySQL || proposal?.sql || proposal?.applySql, 8000),
     rollbackSQL:
@@ -65,11 +140,12 @@ function normalizeCandidateProposal(proposal, config, workerId) {
 }
 
 // ---------------------------------------------------------------------------
-// Builder result normalisation (benchmark measurements)
+// Builder result normalisation — common timing fields
+// Engine can extend via engine.extendBuilderResult(normalized, raw)
 // ---------------------------------------------------------------------------
 
-function normalizeBuilderResult(result, config, workerId) {
-  return {
+function normalizeBuilderResult(result, config, workerId, engine) {
+  const normalized = {
     proposalId: safeTrim(result?.proposalId || result?.id, 120),
     isBaseline: Boolean(result?.isBaseline),
 
@@ -77,21 +153,6 @@ function normalizeBuilderResult(result, config, workerId) {
       medianMs: optionalFiniteNumber(result?.baseline?.medianMs),
       p95Ms: optionalFiniteNumber(result?.baseline?.p95Ms),
       cvPct: optionalFiniteNumber(result?.baseline?.cvPct),
-      leafAccessNodes: normalizeStringArray(
-        result?.baseline?.leafAccessNodes,
-        20,
-      ),
-      planNodeSet: normalizeStringArray(result?.baseline?.planNodeSet, 40),
-      planStructureHash: safeTrim(
-        result?.baseline?.planStructureHash,
-        120,
-      ),
-      sharedHitBlocks: optionalFiniteNumber(
-        result?.baseline?.sharedHitBlocks,
-      ),
-      sharedReadBlocks: optionalFiniteNumber(
-        result?.baseline?.sharedReadBlocks,
-      ),
     },
 
     candidate: {
@@ -104,24 +165,6 @@ function normalizeBuilderResult(result, config, workerId) {
       cvPct: optionalFiniteNumber(
         result?.candidate?.cvPct ?? result?.cvPct,
       ),
-      leafAccessNodes: normalizeStringArray(
-        result?.candidate?.leafAccessNodes ?? result?.leafAccessNodes,
-        20,
-      ),
-      planNodeSet: normalizeStringArray(
-        result?.candidate?.planNodeSet ?? result?.planNodeSet,
-        40,
-      ),
-      planStructureHash: safeTrim(
-        result?.candidate?.planStructureHash ?? result?.planStructureHash,
-        120,
-      ),
-      sharedHitBlocks: optionalFiniteNumber(
-        result?.candidate?.sharedHitBlocks,
-      ),
-      sharedReadBlocks: optionalFiniteNumber(
-        result?.candidate?.sharedReadBlocks,
-      ),
     },
 
     resultParity: result?.parityChecked ? result?.resultParity === true : undefined,
@@ -130,14 +173,22 @@ function normalizeBuilderResult(result, config, workerId) {
     indexSizeBytes: optionalFiniteNumber(result?.indexSizeBytes),
     applySQL: safeTrim(result?.applySQL || result?.applySql, 8000),
     rollbackSQL: safeTrim(result?.rollbackSQL || result?.rollbackSql, 8000),
+    deploySQL: safeTrim(result?.deploySQL || result?.deploySql, 8000),
     explainJSON: result?.explainJSON || result?.explainJson || null,
     notes: safeTrim(result?.notes, 2000),
     implementedByWorkerId: workerId,
   };
+
+  // Let engine add engine-specific fields (e.g., leafAccessNodes, planNodeSet)
+  if (engine?.extendBuilderResult) {
+    return engine.extendBuilderResult(normalized, result);
+  }
+
+  return normalized;
 }
 
 // ---------------------------------------------------------------------------
-// Audit entry normalisation (auditor output)
+// Audit entry normalisation (engine-agnostic)
 // ---------------------------------------------------------------------------
 
 function normalizeAuditEntry(audit) {
@@ -163,7 +214,13 @@ function normalizeAuditEntry(audit) {
 // Main envelope parser
 // ---------------------------------------------------------------------------
 
-export function parseWorkerEnvelope(responseText, worker, config) {
+/**
+ * @param {string} responseText
+ * @param {object} worker — { agentId, assignedLane }
+ * @param {object} config
+ * @param {object} [engine] — { strategyTypes, defaultStrategyType, extendBuilderResult }
+ */
+export function parseWorkerEnvelope(responseText, worker, config, engine) {
   const parsed = extractJson(responseText);
   const envelope =
     parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -191,17 +248,17 @@ export function parseWorkerEnvelope(responseText, worker, config) {
   return {
     summary: safeTrim(envelope.summary || responseText, 2000),
     candidateProposals: candidateSource.map((p) =>
-      normalizeCandidateProposal(p, config, worker.agentId),
+      normalizeCandidateProposal(p, config, worker.agentId, engine),
     ),
     results: resultsSource.map((r) =>
-      normalizeBuilderResult(r, config, worker.agentId),
+      normalizeBuilderResult(r, config, worker.agentId, engine),
     ),
     audits: auditsSource.map((a) => normalizeAuditEntry(a)),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Lane assignment
+// Lane assignment (engine-agnostic)
 // ---------------------------------------------------------------------------
 
 export function assignLanes(participants) {

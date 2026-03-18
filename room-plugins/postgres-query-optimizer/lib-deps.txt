@@ -1,0 +1,2 @@
+# Shared library dependencies (synced as sibling directories)
+sql-optimizer-core

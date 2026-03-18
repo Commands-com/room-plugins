@@ -1,9 +1,9 @@
 {
-  "id": "postgres_query_optimizer",
-  "name": "Postgres Query Optimizer",
+  "id": "redshift_query_optimizer",
+  "name": "Redshift Query Optimizer",
   "version": "1.0.0",
-  "orchestratorType": "postgres_query_optimizer",
-  "description": "Empirical SQL performance tuning: rewrite queries, propose indexes, and verify speedup with EXPLAIN ANALYZE",
+  "orchestratorType": "redshift_query_optimizer",
+  "description": "Empirical SQL performance tuning for Amazon Redshift: rewrite queries, benchmark on-cluster, and recommend sort/dist key changes",
   "supportsQuorum": true,
   "roles": {
     "required": ["explorer", "builder", "auditor"],
@@ -21,7 +21,7 @@
     "maxDurationMs": { "default": 3600000, "min": 60000, "max": 14400000 },
     "maxFailures": { "default": 5, "min": 1, "max": 20 },
     "agentTimeoutMs": { "default": 1800000, "min": 10000, "max": 3600000 },
-    "pluginHookTimeoutMs": { "default": 360000, "min": 5000, "max": 600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 600000 },
     "llmTimeoutMs": { "default": 60000, "min": 10000, "max": 300000 },
     "turnFloorRole": "explorer",
     "turnFloorFormula": "1 + N"
@@ -48,6 +48,7 @@
           "codegen",
           "static_audit",
           "frontier_refine",
+          "synthesis",
           "complete"
         ],
         "phaseLabels": {
@@ -57,6 +58,7 @@
           "codegen": "Codegen",
           "static_audit": "Static Audit",
           "frontier_refine": "Refine",
+          "synthesis": "Synthesis",
           "complete": "Complete"
         }
       },
@@ -101,6 +103,18 @@
         "language": "sql"
       },
       {
+        "type": "code-blocks",
+        "key": "advisoryRecommendations",
+        "label": "Table Design Recommendations",
+        "language": "sql"
+      },
+      {
+        "type": "code-blocks",
+        "key": "recommendedPlan",
+        "label": "Recommended Deployment Plan",
+        "language": "sql"
+      },
+      {
         "type": "table",
         "key": "frontier",
         "label": "Frontier",
@@ -110,7 +124,6 @@
           { "key": "proposalId", "label": "Proposal", "width": 180 },
           { "key": "medianMs", "label": "Time (ms)", "width": 100 },
           { "key": "speedupPct", "label": "Speedup %", "width": 100 },
-          { "key": "indexSizeMb", "label": "Index Size", "width": 100 },
           { "key": "riskScore", "label": "Risk", "width": 60 },
           { "key": "status", "label": "Status", "width": 90 },
           { "key": "owner", "label": "Builder", "width": 120 }
@@ -138,19 +151,19 @@
   },
   "objective": {
     "required": false,
-    "placeholder": "Optional: add constraints or priorities (e.g. \"latency matters more than index size\", \"no new indexes on orders\", \"focus on the users \u2194 audit_log join\")"
+    "placeholder": "Optional: add constraints or priorities (e.g. \"minimize redistribution steps\", \"avoid table rebuilds\", \"focus on the orders \u2194 line_items join\")"
   },
   "display": {
-    "typeLabel": "Postgres Query Optimizer",
+    "typeLabel": "Redshift Query Optimizer",
     "typeTag": "SQL",
     "cycleNoun": "Cycle",
-    "reportTitle": "Postgres Query Optimization Report",
+    "reportTitle": "Redshift Query Optimization Report",
     "activityMessages": {
       "idle": "Waiting...",
-      "discovery": "Analyzing slow queries and schema",
-      "fanOut": "Running EXPLAIN ANALYZE on candidates",
+      "discovery": "Analyzing query plan and table metadata",
+      "fanOut": "Benchmarking rewrites on cluster",
       "singleTurn": "Worker optimizing query...",
-      "synthesis": "Ranking optimization frontier",
+      "synthesis": "Agents voting on best deployment plan",
       "planning": "Choosing next tuning strategy"
     },
     "defaultRoster": [
@@ -175,127 +188,56 @@
       ]
     },
     "codeBlocks": [
+      { "metricKey": "recommendedPlan", "label": "Recommended Deployment Plan", "language": "sql" },
       { "metricKey": "solutions", "label": "All Solutions", "language": "sql" },
-      { "metricKey": "winnerIndexes", "label": "Proposed Indexes", "language": "sql" }
+      { "metricKey": "advisoryRecommendations", "label": "Table Design Recommendations", "language": "sql" }
     ]
   },
   "configSchema": {
     "plannedCandidatesPerCycle": { "type": "integer", "min": 1, "max": 10, "default": 4 },
     "promoteTopK": { "type": "integer", "min": 1, "max": 5, "default": 2 },
-    "maxRetestCandidates": { "type": "integer", "min": 1, "max": 3, "default": 1 },
+    "maxRetestCandidates": { "type": "integer", "min": 1, "max": 3, "default": 2 },
     "maxRiskScore": { "type": "integer", "min": 0, "max": 10, "default": 7 },
     "targetImprovementPct": { "type": "number", "min": 0, "max": 1000, "default": 20 },
-    "warmupRuns": { "type": "integer", "min": 1, "max": 20, "default": 3 },
-    "benchmarkTrials": { "type": "integer", "min": 3, "max": 50, "default": 10 },
-    "plateauCycles": { "type": "integer", "min": 1, "max": 5, "default": 2 },
-    "scaleFactor": { "type": "integer", "min": 1000, "max": 2000000, "default": 100000 }
+    "warmupRuns": { "type": "integer", "min": 1, "max": 20, "default": 2 },
+    "benchmarkTrials": { "type": "integer", "min": 3, "max": 50, "default": 5 },
+    "plateauCycles": { "type": "integer", "min": 1, "max": 5, "default": 2 }
   },
   "roomConfigSchema": {
-    "demoMode": {
-      "type": "boolean",
-      "label": "Demo Mode",
-      "default": false,
-      "description": "Use bundled e-commerce schema, data, and slow query. No database or Docker needed for config — Docker still required at runtime."
-    },
-    "schemaSource": {
-      "type": "enum",
-      "label": "Schema Source",
-      "options": ["introspect", "dump", "migrations"],
-      "default": "introspect",
-      "description": "How to load the database schema into the Docker harness.",
-      "visibleWhen": { "demoMode": false }
-    },
     "dbUrl": {
       "type": "string",
-      "label": "Postgres URL",
-      "required": false,
-      "placeholder": "postgres://user:pass@localhost:5432/db",
-      "description": "Postgres connection string. Required when schemaSource is introspect or seedFromSource is true.",
-      "visibleWhen": [
-        { "demoMode": false, "schemaSource": "introspect" },
-        { "demoMode": false, "seedFromSource": true }
-      ]
+      "label": "Redshift URL",
+      "required": true,
+      "placeholder": "postgres://user:pass@cluster.region.redshift.amazonaws.com:5439/db",
+      "description": "Redshift connection string. Uses the Postgres wire protocol."
     },
     "slowQuery": {
       "type": "string",
       "label": "Target Query",
-      "required": false,
+      "required": true,
       "multiline": true,
-      "rows": 6,
+      "rows": 8,
       "placeholder": "SELECT * FROM large_table WHERE...",
-      "description": "SQL to optimize. Must be a read-only SELECT or WITH...SELECT with concrete values.",
-      "visibleWhen": { "demoMode": false }
-    },
-    "schemaPath": {
-      "type": "string",
-      "label": "Schema Path",
-      "required": false,
-      "description": "Path to pg_dump schema or migrations directory. Required when schemaSource is dump or migrations.",
-      "visibleWhen": { "demoMode": false, "schemaSource": ["dump", "migrations"] }
-    },
-    "seedDataPath": {
-      "type": "string",
-      "label": "Seed Data Path",
-      "description": "SQL script or pg_dump data-only file to populate the harness (Tier 1).",
-      "visibleWhen": { "demoMode": false }
-    },
-    "seedFromSource": {
-      "type": "boolean",
-      "label": "Sample from Source",
-      "default": false,
-      "description": "Sample real rows from dbUrl instead of synthetic data (Tier 2).",
-      "visibleWhen": { "demoMode": false }
-    },
-    "postgresVersion": {
-      "type": "enum",
-      "label": "Postgres Version",
-      "options": ["14", "15", "16", "17"],
-      "default": "16",
-      "visibleWhen": { "demoMode": false }
+      "description": "SQL to optimize. Must be a read-only SELECT or WITH...SELECT with concrete values."
     },
     "schemaFilter": {
       "type": "string_array",
       "label": "Include Tables",
       "maxItems": 20,
       "default": [],
-      "visibleWhen": { "demoMode": false }
+      "description": "Limit schema analysis to these tables. Leave empty to analyze all tables referenced by the query."
     },
     "outputDir": {
       "type": "directory",
       "label": "Output Directory",
-      "default": ".commands/postgres-tuner"
-    },
-    "scaleFactor": {
-      "type": "string",
-      "label": "Scale Factor",
-      "default": "100000",
-      "description": "Target row count for data sampling and synthetic generation (1000–1000000). Parsed as integer in plugin code.",
-      "visibleWhen": { "demoMode": false }
-    },
-    "containerMemory": {
-      "type": "enum",
-      "label": "Container Memory",
-      "options": ["512m", "1g", "2g", "4g"],
-      "default": "1g",
-      "description": "Memory limit for the Docker harness container. Increase for large tables.",
-      "visibleWhen": { "demoMode": false }
-    },
-    "productionStats": {
-      "type": "string",
-      "label": "Production Stats JSON",
-      "required": false,
-      "multiline": true,
-      "rows": 4,
-      "placeholder": "{ \"pg_stat_user_tables\": [...], \"pg_stat_statements\": [...] }",
-      "description": "Optional JSON blob of pg_stat_user_tables / pg_stat_statements data for telemetry-assisted auditing.",
-      "visibleWhen": { "demoMode": false }
+      "default": ".commands/redshift-tuner"
     }
   },
   "setup": {
     "compatibilityGate": true,
-    "compatibilityTitle": "Postgres Optimizer Preflight",
-    "compatibilityDescription": "Verify Docker availability and configuration before starting. Docker is required to spin up an isolated Postgres instance for benchmarking.",
-    "checkLabel": "Verify Setup",
+    "compatibilityTitle": "Redshift Optimizer Preflight",
+    "compatibilityDescription": "Verify Redshift cluster connectivity and query validity before starting.",
+    "checkLabel": "Verify Connection",
     "fixLabel": "Setup Tuner Workspace",
     "allowMakeCompatible": true
   }

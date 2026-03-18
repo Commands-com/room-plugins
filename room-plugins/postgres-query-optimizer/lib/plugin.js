@@ -1,14 +1,23 @@
 import { buildCompatibilityReport, getConfig } from './config.js';
-import { assignLanes } from './envelope.js';
-import { PHASES } from './constants.js';
+import { createPostgresEngine } from './engine.js';
 import {
+  PHASES,
+  assignLanes,
   chooseStopReason,
   evaluateImprovement,
   mergeCycleArtifacts,
   mergeRetestResults,
   recomputeFrontier,
   selectRetestCandidates,
-} from './candidates.js';
+  createInitialState,
+  derivePartialPhase,
+  advancePhase,
+  setPhase,
+  buildPendingDecision,
+  enqueueProposals,
+  selectActivePromotedProposals,
+  emitStateMetrics,
+} from '../../sql-optimizer-core/index.js';
 import {
   checkDockerAvailability,
   checkParity,
@@ -28,13 +37,6 @@ import {
   teardown,
   teardownAll,
 } from './harness.js';
-import { createInitialState, derivePartialPhase, advancePhase, setPhase } from './phases.js';
-import {
-  buildPendingDecision,
-  enqueueProposals,
-  selectActivePromotedProposals,
-} from './planning.js';
-import { emitStateMetrics } from './report.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -202,62 +204,77 @@ function collectSchemaRepairBuilderResponses(state, ctx, responses) {
     });
 }
 
-function finishSearchCycle(ctx, state, config) {
-  // Check if retests are needed before ranking
-  const needsBaselineRetest = state._baselineNeedsRetest && !state.baselines?.retested;
-  const retestCandidates = selectRetestCandidates(state, config);
-
-  if (needsBaselineRetest || retestCandidates.length > 0) {
-    state._retestQueue = retestCandidates;
-    state.pendingFanOut = 'retest';
-    setPhase(state, PHASES.FRONTIER_REFINE);
-    ctx.setState(state);
-    emitStateMetrics(ctx, state);
-    return buildPendingDecision(ctx, state, config);
-  }
-
-  recomputeFrontier(state, config);
-  evaluateImprovement(state);
-
-  const stopReason = chooseStopReason(state, config, ctx.limits);
-  if (stopReason) {
-    setPhase(state, PHASES.COMPLETE);
-    state.pendingFanOut = null;
-    ctx.setState(state);
-    emitStateMetrics(ctx, state);
-    return { type: 'stop', reason: stopReason };
-  }
-
-  if (state.proposalBacklog.length === 0) {
-    // Planning phase will generate new proposals
-  }
-
-  state.cycleIndex += 1;
-  ctx.setCycle(state.cycleIndex);
-  setPhase(state, PHASES.ANALYSIS);
-  state.pendingFanOut = 'planning';
-  ctx.setState(state);
-  emitStateMetrics(ctx, state);
-  return buildPendingDecision(ctx, state, config);
-}
-
 // ---------------------------------------------------------------------------
 // Plugin factory
 // ---------------------------------------------------------------------------
 
 export function createPlugin() {
+  const engine = createPostgresEngine();
+
+  // Engine-specific initial state fields
+  const pgInitialState = {
+    harnessState: null,
+    demoMode: false,
+    dataTier: null,
+  };
+
+  // Wrap core functions to auto-pass engine hooks
+  const _createInitialState = (ctx) => createInitialState(ctx, pgInitialState);
+  const _emitStateMetrics = (ctx, state) => {
+    const config = getConfig(ctx);
+    emitStateMetrics(ctx, state, config, engine);
+  };
+  const _buildPendingDecision = (ctx, state, config) => buildPendingDecision(ctx, state, config, engine);
+  const _mergeCycleArtifacts = (state, responses, config) => mergeCycleArtifacts(state, responses, config, engine);
+  const _mergeRetestResults = (state, responses, config) => mergeRetestResults(state, responses, config, engine);
+  const _derivePartialPhase = (state, event, config) => derivePartialPhase(state, event, config, engine);
+
+  function finishSearchCycle(ctx, state, config) {
+    const needsBaselineRetest = state._baselineNeedsRetest && !state.baselines?.retested;
+    const retestCandidates = selectRetestCandidates(state, config);
+
+    if (needsBaselineRetest || retestCandidates.length > 0) {
+      state._retestQueue = retestCandidates;
+      state.pendingFanOut = 'retest';
+      setPhase(state, PHASES.FRONTIER_REFINE);
+      ctx.setState(state);
+      _emitStateMetrics(ctx, state);
+      return _buildPendingDecision(ctx, state, config);
+    }
+
+    recomputeFrontier(state, config);
+    evaluateImprovement(state);
+
+    const stopReason = chooseStopReason(state, config, ctx.limits);
+    if (stopReason) {
+      setPhase(state, PHASES.COMPLETE);
+      state.pendingFanOut = null;
+      ctx.setState(state);
+      _emitStateMetrics(ctx, state);
+      return { type: 'stop', reason: stopReason };
+    }
+
+    state.cycleIndex += 1;
+    ctx.setCycle(state.cycleIndex);
+    setPhase(state, PHASES.ANALYSIS);
+    state.pendingFanOut = 'planning';
+    ctx.setState(state);
+    _emitStateMetrics(ctx, state);
+    return _buildPendingDecision(ctx, state, config);
+  }
+
   function init(ctx) {
-    const state = createInitialState(ctx);
+    const state = _createInitialState(ctx);
     const { lanesByAgentId, workersByLane } = assignLanes(ctx.participants || []);
     state.lanesByAgentId = lanesByAgentId;
     state.workersByLane = workersByLane;
     state.workerCount = Object.keys(lanesByAgentId).length;
     ctx.setState(state);
-    emitStateMetrics(ctx, state);
+    _emitStateMetrics(ctx, state);
   }
 
   async function onRoomStart(ctx) {
-    const state = ctx.getState() || createInitialState(ctx);
+    const state = ctx.getState() || _createInitialState(ctx);
     const config = getConfig(ctx);
 
     const _progressStart = Date.now();
@@ -275,7 +292,7 @@ export function createPlugin() {
       emitProgress('Compatibility check failed');
       setPhase(state, PHASES.COMPLETE);
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
+      _emitStateMetrics(ctx, state);
       return { type: 'stop', reason: 'global_preflight_failed' };
     }
 
@@ -294,7 +311,7 @@ export function createPlugin() {
         emitProgress('Docker not available');
         setPhase(state, PHASES.COMPLETE);
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
         return { type: 'stop', reason: 'docker_unavailable' };
       }
 
@@ -312,7 +329,7 @@ export function createPlugin() {
           emitProgress(`Demo asset load failed: ${err.message}`);
           setPhase(state, PHASES.COMPLETE);
           ctx.setState(state);
-          emitStateMetrics(ctx, state);
+          _emitStateMetrics(ctx, state);
           return { type: 'stop', reason: `demo_asset_load_failed: ${err.message}` };
         }
       }
@@ -343,7 +360,7 @@ export function createPlugin() {
         emitProgress('Container failed to start');
         setPhase(state, PHASES.COMPLETE);
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
         return { type: 'stop', reason: 'container_start_failed' };
       }
 
@@ -355,7 +372,7 @@ export function createPlugin() {
         emitProgress(`Schema load failed: ${schemaResult.message}`);
         setPhase(state, PHASES.COMPLETE);
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
         return { type: 'stop', reason: 'schema_load_failed' };
       }
       emitProgress(`Schema loaded: ${schemaResult.message}`);
@@ -387,7 +404,7 @@ export function createPlugin() {
         emitProgress(`Data load failed: ${dataResult.message}`);
         setPhase(state, PHASES.COMPLETE);
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
         return { type: 'stop', reason: `data_load_failed: ${dataResult.message}` };
       }
       if (dataResult.tier === 'none' || dataResult.tier === 'error') {
@@ -395,7 +412,7 @@ export function createPlugin() {
         emitProgress('No data source configured');
         setPhase(state, PHASES.COMPLETE);
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
         return { type: 'stop', reason: 'no_data_source: No data source configured — provide seedDataPath, seedFromSource, or use demo mode' };
       }
       emitProgress(`Data loaded: ${dataResult.message}`);
@@ -436,7 +453,7 @@ export function createPlugin() {
       emitProgress(`Harness error: ${err.message}`);
       setPhase(state, PHASES.COMPLETE);
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
+      _emitStateMetrics(ctx, state);
       return { type: 'stop', reason: `harness_error: ${err.message}` };
     }
 
@@ -446,8 +463,8 @@ export function createPlugin() {
     state.proposalBacklog = [];
     ctx.setCycle(0);
     ctx.setState(state);
-    emitStateMetrics(ctx, state);
-    return buildPendingDecision(ctx, state, config);
+    _emitStateMetrics(ctx, state);
+    return _buildPendingDecision(ctx, state, config);
   }
 
   function onTurnResult() {
@@ -455,12 +472,12 @@ export function createPlugin() {
   }
 
   async function onFanOutComplete(ctx, responses) {
-    const state = ctx.getState() || createInitialState(ctx);
+    const state = ctx.getState() || _createInitialState(ctx);
     const config = getConfig(ctx);
 
     // ---- BASELINE fan-out complete ----
     if (state.pendingFanOut === 'baseline') {
-      const { proposals } = mergeCycleArtifacts(state, responses, config);
+      const { proposals } = _mergeCycleArtifacts(state, responses, config);
       enqueueProposals(state, proposals, config);
 
       state.cycleIndex = 1;
@@ -468,13 +485,13 @@ export function createPlugin() {
       setPhase(state, PHASES.ANALYSIS);
       state.pendingFanOut = 'planning';
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
-      return buildPendingDecision(ctx, state, config);
+      _emitStateMetrics(ctx, state);
+      return _buildPendingDecision(ctx, state, config);
     }
 
     // ---- ANALYSIS/PLANNING fan-out complete ----
     if (state.pendingFanOut === 'planning') {
-      const { proposals } = mergeCycleArtifacts(state, responses, config);
+      const { proposals } = _mergeCycleArtifacts(state, responses, config);
       enqueueProposals(state, proposals, config);
 
       selectActivePromotedProposals(state, config);
@@ -487,7 +504,7 @@ export function createPlugin() {
           setPhase(state, PHASES.COMPLETE);
           state.pendingFanOut = null;
           ctx.setState(state);
-          emitStateMetrics(ctx, state);
+          _emitStateMetrics(ctx, state);
           return { type: 'stop', reason: stopReason };
         }
 
@@ -496,21 +513,21 @@ export function createPlugin() {
         setPhase(state, PHASES.ANALYSIS);
         state.pendingFanOut = 'planning';
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
-        return buildPendingDecision(ctx, state, config);
+        _emitStateMetrics(ctx, state);
+        return _buildPendingDecision(ctx, state, config);
       }
 
       setPhase(state, PHASES.CODEGEN);
       state.pendingFanOut = 'cycle';
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
-      return buildPendingDecision(ctx, state, config);
+      _emitStateMetrics(ctx, state);
+      return _buildPendingDecision(ctx, state, config);
     }
 
     // ---- CODEGEN/CYCLE fan-out complete ----
     if (state.pendingFanOut === 'cycle') {
       const candidateCountBefore = state.candidates.length;
-      const { proposals } = mergeCycleArtifacts(state, responses, config);
+      const { proposals } = _mergeCycleArtifacts(state, responses, config);
       enqueueProposals(state, proposals, config);
       const builtNewCandidates = state.candidates.length > candidateCountBefore;
 
@@ -529,8 +546,8 @@ export function createPlugin() {
         setPhase(state, PHASES.STATIC_AUDIT);
         state.pendingFanOut = 'audit';
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
-        return buildPendingDecision(ctx, state, config);
+        _emitStateMetrics(ctx, state);
+        return _buildPendingDecision(ctx, state, config);
       }
 
       const schemaRepairResponses = collectSchemaRepairBuilderResponses(state, ctx, responses);
@@ -539,8 +556,8 @@ export function createPlugin() {
         setPhase(state, PHASES.STATIC_AUDIT);
         state.pendingFanOut = 'schema_repair';
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
-        return buildPendingDecision(ctx, state, config);
+        _emitStateMetrics(ctx, state);
+        return _buildPendingDecision(ctx, state, config);
       }
 
       return finishSearchCycle(ctx, state, config);
@@ -548,7 +565,7 @@ export function createPlugin() {
 
     // ---- AUDIT fan-out complete ----
     if (state.pendingFanOut === 'audit') {
-      const { proposals } = mergeCycleArtifacts(state, responses, config);
+      const { proposals } = _mergeCycleArtifacts(state, responses, config);
       state.schemaRepairBuilderResponses = [];
       enqueueProposals(state, proposals, config);
       return finishSearchCycle(ctx, state, config);
@@ -556,7 +573,7 @@ export function createPlugin() {
 
     // ---- SCHEMA REPAIR fan-out complete ----
     if (state.pendingFanOut === 'schema_repair') {
-      const { proposals } = mergeCycleArtifacts(state, responses, config);
+      const { proposals } = _mergeCycleArtifacts(state, responses, config);
       state.schemaRepairBuilderResponses = [];
       enqueueProposals(state, proposals, config);
       return finishSearchCycle(ctx, state, config);
@@ -565,7 +582,7 @@ export function createPlugin() {
     // ---- RETEST fan-out complete ----
     if (state.pendingFanOut === 'retest') {
       const candidateCountBefore = state.candidates.length;
-      mergeRetestResults(state, responses, config);
+      _mergeRetestResults(state, responses, config);
       const newCandidatesFromRetest = state.candidates.length - candidateCountBefore;
 
       const retestCandidateIds = (state._retestQueue || []).map((c) => c.proposalId);
@@ -600,8 +617,8 @@ export function createPlugin() {
         setPhase(state, PHASES.STATIC_AUDIT);
         state.pendingFanOut = 'audit';
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
-        return buildPendingDecision(ctx, state, config);
+        _emitStateMetrics(ctx, state);
+        return _buildPendingDecision(ctx, state, config);
       }
 
       recomputeFrontier(state, config);
@@ -612,7 +629,7 @@ export function createPlugin() {
         setPhase(state, PHASES.COMPLETE);
         state.pendingFanOut = null;
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
         return { type: 'stop', reason: stopReason };
       }
 
@@ -621,8 +638,8 @@ export function createPlugin() {
       setPhase(state, PHASES.ANALYSIS);
       state.pendingFanOut = 'planning';
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
-      return buildPendingDecision(ctx, state, config);
+      _emitStateMetrics(ctx, state);
+      return _buildPendingDecision(ctx, state, config);
     }
 
     return null;
@@ -630,25 +647,25 @@ export function createPlugin() {
 
   function onEvent(ctx, event) {
     if (event?.type === 'fan_out_partial') {
-      const state = ctx.getState() || createInitialState(ctx);
+      const state = ctx.getState() || _createInitialState(ctx);
       if (state.pendingFanOut !== 'cycle') return null;
       const config = getConfig(ctx);
-      const nextPhase = derivePartialPhase(state, event, config);
+      const nextPhase = _derivePartialPhase(state, event, config);
       if (!nextPhase) return null;
       const previousPhase = state.phase;
       advancePhase(state, nextPhase);
       if (state.phase !== previousPhase) {
         ctx.setState(state);
-        emitStateMetrics(ctx, state);
+        _emitStateMetrics(ctx, state);
       }
       return null;
     }
 
     if (event?.type === 'participant_disconnected') {
-      const state = ctx.getState() || createInitialState(ctx);
+      const state = ctx.getState() || _createInitialState(ctx);
       setPhase(state, PHASES.FRONTIER_REFINE);
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
+      _emitStateMetrics(ctx, state);
       return {
         type: 'pause',
         reason: `participant disconnected: ${event.agentId}`,
@@ -656,7 +673,7 @@ export function createPlugin() {
     }
 
     if (event?.type === 'user_edit_state') {
-      const state = ctx.getState() || createInitialState(ctx);
+      const state = ctx.getState() || _createInitialState(ctx);
       if (event.edits && typeof event.edits === 'object') {
         if (Array.isArray(event.edits.activePromotedProposals)) {
           state.activePromotedProposals = event.edits.activePromotedProposals;
@@ -666,22 +683,22 @@ export function createPlugin() {
         }
       }
       ctx.setState(state);
-      emitStateMetrics(ctx, state);
+      _emitStateMetrics(ctx, state);
     }
 
     return null;
   }
 
   function onResume(ctx) {
-    const state = ctx.getState() || createInitialState(ctx);
+    const state = ctx.getState() || _createInitialState(ctx);
     const config = getConfig(ctx);
-    return buildPendingDecision(ctx, state, config);
+    return _buildPendingDecision(ctx, state, config);
   }
 
   function refreshPendingDecision(ctx, pendingDecision) {
-    const state = ctx.getState() || createInitialState(ctx);
+    const state = ctx.getState() || _createInitialState(ctx);
     const config = getConfig(ctx);
-    return buildPendingDecision(ctx, state, config) || pendingDecision;
+    return _buildPendingDecision(ctx, state, config) || pendingDecision;
   }
 
   async function shutdown(ctx) {

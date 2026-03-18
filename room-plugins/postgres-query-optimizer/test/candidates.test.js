@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   isConfidentMeasurement,
-  determinePlanShapeChanged,
   sortCandidatesForFrontier,
   recomputeFrontier,
   evaluateImprovement,
   computeBestImprovementPct,
   chooseStopReason,
   findCandidateById,
-} from '../lib/candidates.js';
+} from '../../sql-optimizer-core/index.js';
+import { createPostgresEngine } from '../lib/engine.js';
+
+const { determinePlanShapeChanged } = createPostgresEngine();
 
 describe('isConfidentMeasurement', () => {
   it('rejects when CV is too high', () => {

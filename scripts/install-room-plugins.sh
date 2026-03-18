@@ -97,6 +97,9 @@ if [[ "${#REQUESTED_PLUGINS[@]}" -gt 0 ]]; then
 else
   for plugin_path in "${SOURCE_DIR}"/*; do
     [[ -d "${plugin_path}" ]] || continue
+    # Skip library directories (no manifest.json) during auto-discovery.
+    # Libraries are still installed as dependencies of plugins that need them.
+    [[ -f "${plugin_path}/manifest.json" ]] || continue
     PLUGIN_PATHS+=("${plugin_path}")
   done
 fi
@@ -109,22 +112,34 @@ if [[ "${SELECTIVE_INSTALL}" -eq 0 ]]; then
   # Collect source plugin names for stale-directory pruning (Bash 3-compatible).
   # Names are bracketed with colons on both sides so case-matching is exact
   # (e.g. ":template-room:" will not match a dest named "template").
-  source_plugin_names=":"
+  source_managed_names=":"
   for plugin_path in "${PLUGIN_PATHS[@]}"; do
-    source_plugin_names="${source_plugin_names}$(basename "${plugin_path}"):"
+    plugin_name="$(basename "${plugin_path}")"
+    source_managed_names="${source_managed_names}${plugin_name}:"
+    if [[ -f "${plugin_path}/lib-deps.txt" ]]; then
+      while IFS= read -r dep_name || [[ -n "${dep_name}" ]]; do
+        dep_name="$(echo "${dep_name}" | xargs)"
+        [[ -z "${dep_name}" || "${dep_name}" == \#* ]] && continue
+        case "${source_managed_names}" in
+          *":${dep_name}:"*) ;;
+          *) source_managed_names="${source_managed_names}${dep_name}:" ;;
+        esac
+      done < "${plugin_path}/lib-deps.txt"
+    fi
   done
 
-  # Remove destination plugin directories that no longer exist in source.
-  # Safety: only delete directories this installer previously managed.
+  # Remove destination managed directories that no longer exist in source.
+  # Safety: only delete directories this installer previously managed
+  # as either plugins or shared libraries.
   for dest_path in "${DEST_DIR}"/*; do
     [[ -d "${dest_path}" ]] || continue
     dest_name="$(basename "${dest_path}")"
-    case "${source_plugin_names}" in
+    case "${source_managed_names}" in
       *":${dest_name}:"*)
         ;; # still exists in source, keep it
       *)
-        if [[ -f "${dest_path}/.installed-by-commands-room-plugins" ]]; then
-          echo "[${dest_name}] removing stale plugin directory"
+        if [[ -f "${dest_path}/.installed-by-commands-room-plugins" || -f "${dest_path}/.installed-by-commands-room-library" ]]; then
+          echo "[${dest_name}] removing stale managed directory"
           rm -rf "${dest_path}"
         else
           echo "[${dest_name}] skipping removal (not managed by this installer)"
@@ -150,6 +165,30 @@ for plugin_path in "${PLUGIN_PATHS[@]}"; do
   if [[ "${INSTALL_DEPS}" -eq 1 && -f "${dest_plugin_path}/package.json" ]]; then
     echo "[${plugin_name}] npm install --omit=dev"
     npm install --prefix "${dest_plugin_path}" --omit=dev
+  fi
+
+  # Sync shared library dependencies (directories without manifest.json that
+  # plugins reference via relative imports like ../../sql-optimizer-core/).
+  if [[ -f "${plugin_path}/lib-deps.txt" ]]; then
+    while IFS= read -r dep_name || [[ -n "${dep_name}" ]]; do
+      dep_name="$(echo "${dep_name}" | xargs)"
+      [[ -z "${dep_name}" || "${dep_name}" == \#* ]] && continue
+      dep_source="${SOURCE_DIR}/${dep_name}"
+      dep_dest="${DEST_DIR}/${dep_name}"
+      if [[ -d "${dep_source}" ]]; then
+        mkdir -p "${dep_dest}"
+        rsync -a --delete --exclude '.DS_Store' --exclude '.git' --exclude 'node_modules/' \
+          "${dep_source}/" "${dep_dest}/"
+        echo "installed by commands-com-agent-rooms" > "${dep_dest}/.installed-by-commands-room-library"
+        if [[ "${INSTALL_DEPS}" -eq 1 && -f "${dep_dest}/package.json" ]]; then
+          echo "[${plugin_name}] npm install --omit=dev (library: ${dep_name})"
+          npm install --prefix "${dep_dest}" --omit=dev
+        fi
+        echo "[${plugin_name}] synced library dependency: ${dep_name}"
+      else
+        echo "[${plugin_name}] WARNING: library dependency not found: ${dep_name}" >&2
+      fi
+    done < "${plugin_path}/lib-deps.txt"
   fi
 done
 

@@ -1,0 +1,11 @@
+{
+  "name": "sql-optimizer-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "description": "Shared core library for SQL optimizer room plugins"
+}

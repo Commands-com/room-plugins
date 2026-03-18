@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseWorkerEnvelope, assignLanes } from '../lib/envelope.js';
+import { parseWorkerEnvelope, assignLanes } from '../../sql-optimizer-core/index.js';
 
 const MOCK_CONFIG = {
   plannedCandidatesPerCycle: 4,

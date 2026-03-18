@@ -1,52 +1,13 @@
-import { PHASES, STRATEGY_TYPES, DEFAULTS } from './constants.js';
-import { findCandidateById, sortCandidatesForFrontier } from './candidates.js';
-import { safeTrim } from './utils.js';
+import { DEFAULTS } from './constants.js';
+import {
+  findCandidateById,
+  buildDataWarningsSection,
+  buildRecentFailureDiagnostics,
+  buildFrontierSummary,
+} from '../../sql-optimizer-core/index.js';
 
 // ---------------------------------------------------------------------------
-// Proposal management
-// ---------------------------------------------------------------------------
-
-export function enqueueProposals(state, proposals, config) {
-  if (!Array.isArray(proposals) || proposals.length === 0) return;
-
-  const existingIds = new Set([
-    ...state.proposalBacklog.map((p) => p.proposalId),
-    ...state.activePromotedProposals.map((p) => p.proposalId),
-    ...state.candidates.map((c) => c.proposalId),
-  ]);
-
-  for (const proposal of proposals) {
-    if (!proposal.proposalId || existingIds.has(proposal.proposalId)) continue;
-    if (!proposal.applySQL && proposal.strategyType !== 'rewrite') continue;
-    if (proposal.strategyType === 'rewrite' && !proposal.targetQuery && !proposal.applySQL) continue;
-    existingIds.add(proposal.proposalId);
-    state.proposalBacklog.push(proposal);
-  }
-}
-
-export function selectActivePromotedProposals(state, config) {
-  const topK = config.promoteTopK || DEFAULTS.promoteTopK;
-  state.activePromotedProposals = state.proposalBacklog.splice(0, topK);
-}
-
-// ---------------------------------------------------------------------------
-// Data warning section builder
-// ---------------------------------------------------------------------------
-
-function buildDataWarningsSection(state) {
-  const warnings = state.dataWarnings;
-  if (!Array.isArray(warnings) || warnings.length === 0) return [];
-  const lines = ['## ⚠ Data Quality Warnings'];
-  lines.push('The harness data was populated via Tier 3 synthetic generation. Keep these caveats in mind:');
-  for (const w of warnings) {
-    lines.push(`- ${w}`);
-  }
-  lines.push('');
-  return lines;
-}
-
-// ---------------------------------------------------------------------------
-// Mutation hint generation (for cycle 2+)
+// Mutation hint generation (Postgres-specific, for cycle 2+)
 // ---------------------------------------------------------------------------
 
 function buildMutationHints(state, config) {
@@ -109,25 +70,7 @@ function buildMutationHints(state, config) {
 }
 
 // ---------------------------------------------------------------------------
-// Recent failure diagnostics
-// ---------------------------------------------------------------------------
-
-function buildRecentFailureDiagnostics(state) {
-  return state.candidates
-    .filter((c) => c.status === 'rejected')
-    .sort((a, b) => (b.cycleIndex || 0) - (a.cycleIndex || 0))
-    .slice(0, 5)
-    .map((c) => ({
-      proposalId: c.proposalId,
-      strategyType: c.strategyType,
-      rejectedReason: c.rejectedReason || 'unknown',
-      speedupPct: c.speedupPct,
-      notes: c.notes,
-    }));
-}
-
-// ---------------------------------------------------------------------------
-// Prompt builders
+// Postgres-specific prompt builders
 // ---------------------------------------------------------------------------
 
 export function buildBaselineTargets(ctx, state, config) {
@@ -226,10 +169,7 @@ export function buildDiscoveryTargets(ctx, state, config) {
       }
     }
 
-    const frontierSummary = state.frontierIds
-      .map((id) => findCandidateById(state, id))
-      .filter(Boolean)
-      .map((c) => `  - ${c.proposalId} (${c.strategyType}): ${c.speedupPct?.toFixed(1)}% speedup`);
+    const frontierSummary = buildFrontierSummary(state);
     if (frontierSummary.length > 0) {
       cycleContext.push('');
       cycleContext.push('## Current Frontier Winners');
@@ -483,31 +423,6 @@ export function buildAuditTargets(ctx, state, config) {
   }));
 }
 
-function buildSchemaRepairTargets(ctx, state, config) {
-  const repairResponses = state.schemaRepairBuilderResponses || [];
-  const summaries = repairResponses.map((r) =>
-    `Builder ${r.displayName}: ${safeTrim(r.response, 2000)}`,
-  ).join('\n\n---\n\n');
-
-  return ctx.participants.filter((p) => p.role === 'auditor').map((participant) => ({
-    agentId: participant.agentId,
-    message: [
-      `You are the Auditor in a Postgres Query Optimization room.`,
-      `The builder's cycle did not produce any new candidate artifacts.`,
-      `Below are the builder responses. Review them for schema issues, connection problems,`,
-      `or other errors that prevented successful benchmarking.`,
-      '',
-      `## Builder Responses`,
-      summaries,
-      '',
-      `If you can extract valid results from the builder responses, format them as JSON.`,
-      `Otherwise, explain what went wrong so the next cycle can adapt.`,
-      '',
-      `Reply with JSON matching the builder result format if possible, or an audit with findings.`,
-    ].join('\n'),
-  }));
-}
-
 // ---------------------------------------------------------------------------
 // Retest prompt builder
 // ---------------------------------------------------------------------------
@@ -576,28 +491,3 @@ export function buildRetestTargets(ctx, state, config) {
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Decision router
-// ---------------------------------------------------------------------------
-
-export function buildPendingDecision(ctx, state, config) {
-  if (state.pendingFanOut === 'baseline' || state.phase === PHASES.BASELINE) {
-    return { type: 'fan_out', targets: buildBaselineTargets(ctx, state, config) };
-  }
-  if (state.pendingFanOut === 'planning' || state.phase === PHASES.ANALYSIS) {
-    return { type: 'fan_out', targets: buildDiscoveryTargets(ctx, state, config) };
-  }
-  if (state.pendingFanOut === 'cycle' || state.phase === PHASES.CODEGEN) {
-    return { type: 'fan_out', targets: buildCycleTargets(ctx, state, config) };
-  }
-  if (state.pendingFanOut === 'audit' || state.phase === PHASES.STATIC_AUDIT) {
-    return { type: 'fan_out', targets: buildAuditTargets(ctx, state, config) };
-  }
-  if (state.pendingFanOut === 'schema_repair') {
-    return { type: 'fan_out', targets: buildSchemaRepairTargets(ctx, state, config) };
-  }
-  if (state.pendingFanOut === 'retest') {
-    return { type: 'fan_out', targets: buildRetestTargets(ctx, state, config) };
-  }
-  return null;
-}
