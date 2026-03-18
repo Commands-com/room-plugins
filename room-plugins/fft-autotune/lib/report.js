@@ -3,6 +3,12 @@ import path from 'node:path';
 
 import { CODE_SNIPPET_CHAR_LIMIT, PHASES, SOURCE_FILE_EXTENSIONS } from './constants.js';
 import { getConfig } from './config.js';
+
+function resolveOwnerName(ownerId, ctx) {
+  if (!ownerId || !ctx) return ownerId || '';
+  const participant = ctx.getParticipant?.(ownerId);
+  return participant?.displayName || ownerId;
+}
 import { getExpectedBucketKeys, getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
 import { buildRepairDirectives } from './planning.js';
 import { computeBestImprovementPct, findCandidateById, sortCandidatesForFrontier } from './candidates.js';
@@ -133,7 +139,7 @@ function buildWinnerSourcesMetric(state, config) {
   };
 }
 
-export function buildFrontierRows(state) {
+export function buildFrontierRows(state, ctx) {
   return state.frontierIds
     .map((candidateId) => findCandidateById(state, candidateId))
     .filter(Boolean)
@@ -145,7 +151,7 @@ export function buildFrontierRows(state) {
         ? Number(((candidate.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
         : '',
       status: candidate.status,
-      owner: candidate.implementedByWorkerId || '',
+      owner: resolveOwnerName(candidate.implementedByWorkerId, ctx),
     }));
 }
 
@@ -180,7 +186,7 @@ function summarizeReferenceStatus(candidate) {
   return candidate.status || 'attempted';
 }
 
-function buildBaselineRows(state, config) {
+function buildBaselineRows(state, config, ctx) {
   const rows = [];
 
   for (const bucketKey of getExpectedBucketKeys(config)) {
@@ -196,7 +202,7 @@ function buildBaselineRows(state, config) {
       medianNs: Number.isFinite(canonicalBaseline?.medianNs) ? Math.round(canonicalBaseline.medianNs) : '',
       deltaVsScalarPct: '',
       status: canonicalBaseline ? 'ready' : summarizeBaselineStatus(baselineAttempt),
-      owner: baselineArtifact?.implementedByWorkerId || baselineAttempt?.implementedByWorkerId || '',
+      owner: resolveOwnerName(baselineArtifact?.implementedByWorkerId || baselineAttempt?.implementedByWorkerId, ctx),
     });
 
     rows.push({
@@ -208,7 +214,7 @@ function buildBaselineRows(state, config) {
         ? Number(((ne10Reference.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
         : '',
       status: summarizeReferenceStatus(ne10Reference),
-      owner: ne10Reference?.implementedByWorkerId || '',
+      owner: resolveOwnerName(ne10Reference?.implementedByWorkerId, ctx),
     });
   }
 
@@ -231,7 +237,7 @@ function latestBucketCandidate(state, bucketKey) {
     })[0] || null;
 }
 
-function describeBlockedBucket(state, config, bucketKey) {
+function describeBlockedBucket(state, config, bucketKey, ctx) {
   const repairDirectives = buildRepairDirectives(state, config);
   const repairDirective = repairDirectives.find((directive) => directive.bucketKey === bucketKey);
   const baselineAttempt = state.baselineAttempts?.[bucketKey] || null;
@@ -244,7 +250,7 @@ function describeBlockedBucket(state, config, bucketKey) {
       || 'no fresh same-run baseline was produced';
     return {
       family: baselineAttempt?.family || '',
-      owner: baselineAttempt?.implementedByWorkerId || '',
+      owner: resolveOwnerName(baselineAttempt?.implementedByWorkerId, ctx),
       issues: latestCandidate?.audit?.openHighConfidenceFindings || 0,
       baseline: 'no',
       blockedReason: `missing same-run baseline: ${safeTrim(baselineReason, 240)}`,
@@ -259,7 +265,7 @@ function describeBlockedBucket(state, config, bucketKey) {
       .join(' | ');
     return {
       family: repairDirective.family || latestCandidate?.family || '',
-      owner: latestCandidate?.implementedByWorkerId || '',
+      owner: resolveOwnerName(latestCandidate?.implementedByWorkerId, ctx),
       issues: latestCandidate?.audit?.openHighConfidenceFindings || 0,
       baseline: 'yes',
       blockedReason: `repair mode after ${repairDirective.repeatCount} repeated failures: ${safeTrim(summary || repairDirective.signature, 240)}`,
@@ -276,7 +282,7 @@ function describeBlockedBucket(state, config, bucketKey) {
       || 'latest candidate did not produce an eligible winner';
     return {
       family: latestCandidate.family || '',
-      owner: latestCandidate.implementedByWorkerId || '',
+      owner: resolveOwnerName(latestCandidate.implementedByWorkerId, ctx),
       issues: latestCandidate.audit?.openHighConfidenceFindings || 0,
       baseline: latestCandidate.hasBucketBaseline ? 'yes' : 'no',
       blockedReason: safeTrim(reason, 240),
@@ -296,12 +302,12 @@ function describeBlockedBucket(state, config, bucketKey) {
   };
 }
 
-function buildBlockedBucketRows(state, config) {
+function buildBlockedBucketRows(state, config, ctx) {
   if (state.phase !== PHASES.COMPLETE) {
     return [];
   }
   return getMissingWinnerBucketKeys(state, config).map((bucketKey) => {
-    const details = describeBlockedBucket(state, config, bucketKey);
+    const details = describeBlockedBucket(state, config, bucketKey, ctx);
     return {
       bucketKey,
       family: details.family,
@@ -318,7 +324,7 @@ function buildBlockedBucketRows(state, config) {
   });
 }
 
-function buildCandidateRows(state, config) {
+function buildCandidateRows(state, config, ctx) {
   const candidateRows = sortCandidatesForFrontier(state.candidates.filter((candidate) =>
     candidate.family !== 'ne10_neon_reference'
     &&
@@ -336,21 +342,21 @@ function buildCandidateRows(state, config) {
     status: candidate.status,
     issues: candidate.audit.openHighConfidenceFindings || 0,
     baseline: candidate.hasBucketBaseline ? 'yes' : 'no',
-    owner: candidate.implementedByWorkerId || '',
+    owner: resolveOwnerName(candidate.implementedByWorkerId, ctx),
     attempts: '',
     blockedReason: '',
     repairMode: '',
   }));
-  return [...candidateRows, ...buildBlockedBucketRows(state, config)];
+  return [...candidateRows, ...buildBlockedBucketRows(state, config, ctx)];
 }
 
-function countCandidateSummary(state, config) {
+function countCandidateSummary(state, config, ctx) {
   return {
     proposed: state.proposalBacklog.length + state.activePromotedProposals.length,
     validated: state.candidates.filter((candidate) => candidate.validation.ok).length,
     benchmarked: state.candidates.filter((candidate) => candidate.benchmark.ok).length,
     frontier: state.frontierIds.length,
-    blocked: buildBlockedBucketRows(state, config).length,
+    blocked: buildBlockedBucketRows(state, config, ctx).length,
   };
 }
 
@@ -361,7 +367,7 @@ export function emitStateMetrics(ctx, state) {
       active: state.phase,
       reached: Array.isArray(state.reachedPhases) ? [...state.reachedPhases] : [state.phase],
     },
-    candidateSummary: countCandidateSummary(state, config),
+    candidateSummary: countCandidateSummary(state, config, ctx),
     cycleProgress: {
       value: state.cycleIndex,
       max: ctx.limits?.maxCycles || 1,
@@ -371,10 +377,10 @@ export function emitStateMetrics(ctx, state) {
       max: 100,
     },
     degradedDiversity: state.degradedDiversity ? 1 : 0,
-    baselines: { rows: buildBaselineRows(state, config) },
-    frontier: { rows: buildFrontierRows(state) },
-    blockedBuckets: { rows: buildBlockedBucketRows(state, config) },
-    candidates: { rows: buildCandidateRows(state, config) },
+    baselines: { rows: buildBaselineRows(state, config, ctx) },
+    frontier: { rows: buildFrontierRows(state, ctx) },
+    blockedBuckets: { rows: buildBlockedBucketRows(state, config, ctx) },
+    candidates: { rows: buildCandidateRows(state, config, ctx) },
     winnerSources: buildWinnerSourcesMetric(state, config),
   });
 }

@@ -1,6 +1,12 @@
 import { computeBestImprovementPct, findCandidateById, sortCandidatesForFrontier } from './candidates.js';
 
-export function buildFrontierRows(state) {
+function resolveOwnerName(ownerId, ctx) {
+  if (!ownerId || !ctx) return ownerId || '';
+  const participant = ctx.getParticipant?.(ownerId);
+  return participant?.displayName || ownerId;
+}
+
+export function buildFrontierRows(state, ctx) {
   return state.frontierIds
     .map((candidateId) => findCandidateById(state, candidateId))
     .filter(Boolean)
@@ -21,11 +27,11 @@ export function buildFrontierRows(state) {
       auditFindings: (candidate.auditFindings || []).length,
       telemetryBacked: Boolean(candidate.telemetryAvailable),
       status: candidate.status,
-      owner: candidate.owner || '',
+      owner: resolveOwnerName(candidate.owner, ctx),
     }));
 }
 
-export function buildCandidateRows(state) {
+export function buildCandidateRows(state, ctx) {
   return sortCandidatesForFrontier(state.candidates).map((candidate) => ({
     cycle: candidate.cycleIndex ?? '',
     strategyType: candidate.strategyType,
@@ -40,7 +46,7 @@ export function buildCandidateRows(state) {
     riskScore: Number.isFinite(candidate.riskScore) ? candidate.riskScore : '',
     auditFindings: (candidate.auditFindings || []).length,
     telemetryBacked: Boolean(candidate.telemetryAvailable),
-    owner: candidate.owner || '',
+    owner: resolveOwnerName(candidate.owner, ctx),
     notes: candidate.rejectedReason || candidate.notes || '',
   }));
 }
@@ -157,8 +163,8 @@ export function emitStateMetrics(ctx, state, config, engine) {
     },
     baselineMs,
     baselines: { rows: baselineRows },
-    frontier: { rows: buildFrontierRows(state) },
-    candidates: { rows: buildCandidateRows(state) },
+    frontier: { rows: buildFrontierRows(state, ctx) },
+    candidates: { rows: buildCandidateRows(state, ctx) },
     solutions: buildSolutionsMetric(state, engine),
   };
 

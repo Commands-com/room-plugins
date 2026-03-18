@@ -1,0 +1,383 @@
+apiVersion: room/v1
+kind: declarative_room
+
+metadata:
+  id: postgres_query_optimizer
+  orchestratorType: postgres_query_optimizer
+  name: Postgres Query Optimizer
+  description: "Empirical SQL performance tuning: rewrite queries, propose indexes, and verify speedup with EXPLAIN ANALYZE"
+  family: empirical_search
+
+display:
+  typeLabel: Postgres Query Optimizer
+  typeTag: SQL
+  cycleNoun: Cycle
+  reportTitle: Postgres Query Optimization Report
+  defaultAddRole: explorer
+  defaultRoster:
+    - role: explorer
+      displayName: Schema Analyst
+    - role: builder
+      displayName: Query Architect
+    - role: auditor
+      displayName: DBA Auditor
+  activityMessages:
+    idle: Waiting...
+    discovery: Analyzing slow queries and schema
+    fanOut: Running EXPLAIN ANALYZE on candidates
+    singleTurn: Worker optimizing query...
+    synthesis: Ranking optimization frontier
+    planning: Choosing next tuning strategy
+
+objective:
+  required: false
+  placeholder: "Optional: add constraints or priorities (e.g. \"latency matters more than index size\", \"no new indexes on orders\", \"focus on the users \u2194 audit_log join\")"
+
+roles:
+  required: [explorer, builder, auditor]
+  optional: []
+  forbidden: [implementer, reviewer, worker]
+  minCount:
+    explorer: 1
+    builder: 1
+    auditor: 1
+
+limits:
+  maxCycles: { default: 4, min: 1, max: 10 }
+  maxTurns: { default: 60, min: 4, max: 500 }
+  maxDurationMs: { default: 3600000, min: 60000, max: 14400000 }
+  maxFailures: { default: 5, min: 1, max: 20 }
+  agentTimeoutMs: { default: 1800000, min: 10000, max: 3600000 }
+  pluginHookTimeoutMs: { default: 360000, min: 5000, max: 600000 }
+  llmTimeoutMs: { default: 60000, min: 10000, max: 300000 }
+  turnFloorRole: explorer
+  turnFloorFormula: "1 + N"
+
+roomConfig:
+  fields:
+    - key: demoMode
+      type: boolean
+      label: Demo Mode
+      default: false
+      helpText: "Use bundled e-commerce schema, data, and slow query. No database or Docker needed for config \u2014 Docker still required at runtime."
+    - key: schemaSource
+      type: select
+      label: Schema Source
+      options: [introspect, dump, migrations]
+      default: introspect
+      helpText: How to load the database schema into the Docker harness.
+      visibleWhen: { demoMode: false }
+    - key: dbUrl
+      type: string
+      label: Postgres URL
+      required: false
+      placeholder: "postgres://user:pass@localhost:5432/db"
+      helpText: Postgres connection string. Required when schemaSource is introspect or seedFromSource is true.
+      visibleWhen:
+        - { demoMode: false, schemaSource: introspect }
+        - { demoMode: false, seedFromSource: true }
+    - key: slowQuery
+      type: text
+      label: Target Query
+      required: false
+      multiline: true
+      rows: 6
+      placeholder: "SELECT * FROM large_table WHERE..."
+      helpText: SQL to optimize. Must be a read-only SELECT or WITH...SELECT with concrete values.
+      visibleWhen: { demoMode: false }
+    - key: schemaPath
+      type: string
+      label: Schema Path
+      required: false
+      helpText: Path to pg_dump schema or migrations directory. Required when schemaSource is dump or migrations.
+      visibleWhen: { demoMode: false, schemaSource: [dump, migrations] }
+    - key: seedDataPath
+      type: string
+      label: Seed Data Path
+      helpText: "SQL script or pg_dump data-only file to populate the harness (Tier 1)."
+      visibleWhen: { demoMode: false }
+    - key: seedFromSource
+      type: boolean
+      label: Sample from Source
+      default: false
+      helpText: "Sample real rows from dbUrl instead of synthetic data (Tier 2)."
+      visibleWhen: { demoMode: false }
+    - key: postgresVersion
+      type: select
+      label: Postgres Version
+      options: ["14", "15", "16", "17"]
+      default: "16"
+      visibleWhen: { demoMode: false }
+    - key: schemaFilter
+      type: string[]
+      label: Include Tables
+      default: []
+      visibleWhen: { demoMode: false }
+    - key: outputDir
+      type: directory
+      label: Output Directory
+      default: ".commands/postgres-tuner"
+    - key: scaleFactor
+      type: string
+      label: Scale Factor
+      default: "100000"
+      helpText: "Target row count for data sampling and synthetic generation (1000\u20131000000). Parsed as integer in plugin code."
+      visibleWhen: { demoMode: false }
+    - key: containerMemory
+      type: select
+      label: Container Memory
+      options: [512m, 1g, 2g, 4g]
+      default: 1g
+      helpText: Memory limit for the Docker harness container. Increase for large tables.
+      visibleWhen: { demoMode: false }
+    - key: productionStats
+      type: text
+      label: Production Stats JSON
+      required: false
+      multiline: true
+      rows: 4
+      placeholder: '{ "pg_stat_user_tables": [...], "pg_stat_statements": [...] }'
+      helpText: Optional JSON blob of pg_stat_user_tables / pg_stat_statements data for telemetry-assisted auditing.
+      visibleWhen: { demoMode: false }
+
+supportsQuorum: true
+
+endpointConstraints:
+  requiresLocalParticipant: true
+  perRole: {}
+
+lanes:
+  explorer:
+    fromRoles: [explorer]
+  builder:
+    fromRoles: [builder]
+  auditor:
+    fromRoles: [auditor]
+
+familyConfig:
+  strategyTypes: [index, rewrite]
+  measuredStrategyTypes: [index, rewrite]
+  plannedCandidatesPerCycle: 4
+  promoteTopK: 2
+  maxRetestCandidates: 1
+  plateauCycles: 2
+  targetImprovementPct: 20
+  supportsSchemaRepair: true
+  supportsBaselineRetest: true
+
+configSchema:
+  plannedCandidatesPerCycle: { type: integer, min: 1, max: 10, default: 4 }
+  promoteTopK: { type: integer, min: 1, max: 5, default: 2 }
+  maxRetestCandidates: { type: integer, min: 1, max: 3, default: 1 }
+  maxRiskScore: { type: integer, min: 0, max: 10, default: 7 }
+  targetImprovementPct: { type: number, min: 0, max: 1000, default: 20 }
+  warmupRuns: { type: integer, min: 1, max: 20, default: 3 }
+  benchmarkTrials: { type: integer, min: 3, max: 50, default: 10 }
+  plateauCycles: { type: integer, min: 1, max: 5, default: 2 }
+  scaleFactor: { type: integer, min: 1000, max: 2000000, default: 100000 }
+
+setup:
+  compatibilityGate:
+    enabled: true
+    title: Postgres Optimizer Preflight
+    description: Verify Docker availability and configuration before starting. Docker is required to spin up an isolated Postgres instance for benchmarking.
+    checkLabel: Verify Setup
+    fixLabel: Setup Tuner Workspace
+    allowMakeCompatible: true
+
+phases:
+  initial: preflight
+  states:
+    - id: preflight
+      dispatch: none
+      onComplete:
+        next: baseline
+
+    - id: baseline
+      dispatch: builder
+      prompt: baseline
+      onComplete:
+        next: planning
+
+    - id: planning
+      dispatch:
+        lane: explorer
+        mode: all
+      prompt: planning
+      onComplete:
+        when:
+          - if: hasMeasuredPromotions
+            next: cycle
+          - if: noCandidatesProduced
+            next: complete
+          - else: frontier_refine
+
+    - id: cycle
+      dispatch:
+        lane: builder
+        mode: count
+        count: 4
+        selection: round_robin
+      prompt: cycle
+      onComplete:
+        when:
+          - if: builtNewCandidates
+            next: audit
+          - if: schemaRepairNeeded
+            next: schema_repair
+          - if: needsRetest
+            next: frontier_refine
+          - if: stopReasonPresent
+            next: complete
+          - else: planning
+
+    - id: audit
+      dispatch: auditor
+      prompt: audit
+      onComplete:
+        when:
+          - if: needsRetest
+            next: frontier_refine
+          - if: stopReasonPresent
+            next: complete
+          - else: planning
+
+    - id: schema_repair
+      dispatch: auditor
+      prompt: schema_repair
+      onComplete:
+        when:
+          - if: needsRetest
+            next: frontier_refine
+          - if: stopReasonPresent
+            next: complete
+          - else: planning
+
+    - id: frontier_refine
+      dispatch: builder
+      prompt: retest
+      onComplete:
+        when:
+          - if: stopReasonPresent
+            next: complete
+          - else: planning
+
+    - id: complete
+      dispatch: none
+
+prompts:
+  baseline:
+    contextBindings:
+      - config.dbUrl
+      - config.slowQuery
+  planning:
+    contextBindings:
+      - config.slowQuery
+      - state.baselines
+      - state.tableMetadata
+  cycle:
+    contextBindings:
+      - config.slowQuery
+      - state.currentPlan
+      - state.frontier
+  audit:
+    contextBindings:
+      - state.candidates
+      - state.baselines
+  retest:
+    contextBindings:
+      - state.promotions
+      - state.baselines
+  schema_repair:
+    contextBindings:
+      - state.lastFailureReason
+      - state.tableMetadata
+
+dashboard:
+  panels:
+    - type: text
+      key: preflightStatus
+      label: Setup Progress
+    - type: phase
+      key: currentPhase
+      label: Phase
+      phases: [preflight, baseline, analysis, codegen, static_audit, frontier_refine, complete]
+      phaseLabels:
+        preflight: Preflight
+        baseline: Baseline
+        analysis: Analysis
+        codegen: Codegen
+        static_audit: Static Audit
+        frontier_refine: Refine
+        complete: Complete
+    - type: table
+      key: baselines
+      label: Baseline
+      columns:
+        - { key: metric, label: Metric, width: 160 }
+        - { key: value, label: Value, width: 200 }
+    - type: counter-group
+      key: candidateSummary
+      label: Strategies
+      counters:
+        - { key: proposed, label: Proposed, color: gray }
+        - { key: promoted, label: Promoted, color: blue }
+        - { key: benchmarked, label: Benchmarked, color: green }
+        - { key: frontier, label: Frontier, color: orange }
+        - { key: rejected, label: Rejected, color: red }
+    - type: progress
+      key: cycleProgress
+      label: Cycle Progress
+      format: "{value} / {max}"
+    - type: progress
+      key: bestImprovementPct
+      label: Best Speedup
+      format: "{value}%"
+    - type: code-blocks
+      key: solutions
+      label: Solutions
+      language: sql
+    - type: table
+      key: frontier
+      label: Frontier
+      columns:
+        - { key: cycle, label: Cycle, width: 50 }
+        - { key: strategyType, label: Type, width: 100 }
+        - { key: proposalId, label: Proposal, width: 180 }
+        - { key: medianMs, label: "Time (ms)", width: 100 }
+        - { key: speedupPct, label: "Speedup %", width: 100 }
+        - { key: indexSizeMb, label: "Index Size", width: 100 }
+        - { key: riskScore, label: Risk, width: 60 }
+        - { key: status, label: Status, width: 90 }
+        - { key: owner, label: Builder, width: 120 }
+      sortable: true
+    - type: table
+      key: candidates
+      label: All Attempts
+      columns:
+        - { key: cycle, label: Cycle, width: 50 }
+        - { key: strategyType, label: Type, width: 100 }
+        - { key: proposalId, label: Proposal, width: 180 }
+        - { key: medianMs, label: "Time (ms)", width: 100 }
+        - { key: speedupPct, label: "Speedup %", width: 100 }
+        - { key: status, label: Status, width: 90 }
+        - { key: riskScore, label: Risk, width: 60 }
+        - { key: owner, label: Builder, width: 120 }
+        - { key: notes, label: Notes, width: 300 }
+      sortable: true
+
+report:
+  summaryMetrics: [bestImprovementPct, candidateSummary]
+  table:
+    metricKey: candidates
+    columns:
+      - { key: cycle, label: Cycle, width: 50 }
+      - { key: strategyType, label: Type, width: 120 }
+      - { key: medianMs, label: "Execution (ms)", width: 110 }
+      - { key: speedupPct, label: "Speedup %", width: 100 }
+      - { key: status, label: Status, width: 90 }
+      - { key: owner, label: Builder, width: 120 }
+      - { key: notes, label: Notes, width: 300 }
+  codeBlocks:
+    - { metricKey: solutions, label: All Solutions, language: sql }
+    - { metricKey: winnerIndexes, label: Proposed Indexes, language: sql }
