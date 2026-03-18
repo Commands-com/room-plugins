@@ -29,6 +29,7 @@ Room Start  ──>  Orchestrator Plugin  ──>  Fan-out / Workers  ──>  R
 | **Full lifecycle** | Hooks for init, start, turn results, fan-out, events, resume, shutdown |
 | **Dashboard panels** | Counter groups, progress bars, charts, agent status, tables, conversation feeds |
 | **SHA-256 integrity** | Allowlist with optional hash pins, symlink rejection, dev-only bypass |
+| **Declarative rooms** | Define phases, dispatch, and dashboard in `room.yaml` — family runtimes handle orchestration |
 | **Copy-and-go** | Clone `template-room`, edit manifest and handler, reinstall |
 | **Additive** | External room types extend built-ins — never override |
 
@@ -73,6 +74,8 @@ Restart Commands Desktop.
 
 ## Build Your Own Room Type
 
+### Classic (imperative)
+
 ```bash
 cp -R ./room-plugins/template-room ./room-plugins/my-room
 ```
@@ -82,14 +85,30 @@ Update:
 - `manifest.json` — set `orchestratorType`, display name, participant roles
 - `index.js` — implement lifecycle hooks (`onRoomStart`, `onTurnResult`, `onFanOutComplete`, etc.)
 
-Reinstall and regenerate allowlist:
+### Declarative (family-based)
+
+For rooms that follow an established pattern (e.g., empirical search/optimization):
+
+```bash
+cp -R ./room-plugins/redshift-query-optimizer ./room-plugins/my-optimizer
+```
+
+Update:
+
+- `room.yaml` — phases, dispatch, dashboard, family config
+- `lib/engine.js` — domain-specific logic (plan shape, prompt builders, winner rendering)
+- `lib/harness.js` — environment interaction (connect, compatibility)
+
+See [Declarative Rooms Guide](./docs/DECLARATIVE_ROOMS.md) for full reference.
+
+### Install
 
 ```bash
 ./scripts/install-room-plugins.sh        # macOS/Linux
 node scripts/install-room-plugins.mjs    # Windows (or any platform)
 ```
 
-Restart Commands Desktop and create a room using your `manifest.orchestratorType`.
+Restart Commands Desktop and create a room using your `orchestratorType`.
 
 ## Security and Loading
 
@@ -112,13 +131,16 @@ In Desktop: **Settings > Developer > Dev Mode + Trust All Plugins**.
 ## Project Layout
 
 ```
-room-plugins/template-room                  Reference implementation (copy to create new)
-room-plugins/fft-autotune                   Advanced empirical search room example with explicit explorer/builder/auditor roles
+room-plugins/template-room                  Classic reference implementation (copy to create new)
+room-plugins/fft-autotune                   Advanced empirical search room (classic)
+room-plugins/redshift-query-optimizer       Declarative room reference (room.yaml + engine/harness)
+room-plugins/sql-optimizer-core             Shared library used by SQL optimizer plugins
 scripts/install-room-plugins.sh             Bash installer (macOS/Linux)
 scripts/install-room-plugins.mjs            Node.js installer (cross-platform)
 scripts/generate-room-allowlist.mjs         Generate allowlist with SHA-256 pins
 scripts/compute-room-plugin-sha256.mjs      Compute single plugin hash
 docs/CONTRACT.md                            Full plugin manifest, hook, and runtime contract
+docs/DECLARATIVE_ROOMS.md                   Declarative room definitions (room.yaml, engine, harness)
 docs/DASHBOARD_GUIDE.md                     Dashboard panel types and metrics authoring
 GETTING_STARTED.md                          End-to-end workflow from install to testing
 ```
@@ -127,4 +149,5 @@ GETTING_STARTED.md                          End-to-end workflow from install to 
 
 - [Getting Started](./GETTING_STARTED.md)
 - [Room Plugin Contract](./docs/CONTRACT.md)
+- [Declarative Rooms Guide](./docs/DECLARATIVE_ROOMS.md)
 - [Dashboard Guide](./docs/DASHBOARD_GUIDE.md)

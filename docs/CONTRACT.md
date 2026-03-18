@@ -19,14 +19,14 @@ No changes to `Commands.app` are required.
 
 ## 2. Required Plugin Files
 
+### Classic plugins
+
 Each plugin folder must contain:
 
 - `manifest.json`
 - `index.js`
 
 Both files must be regular files (not symlinks, not directories).
-
-Example:
 
 ```text
 room-plugins/
@@ -36,6 +36,23 @@ room-plugins/
     package.json          # optional
     node_modules/         # optional
 ```
+
+### Declarative plugins
+
+Declarative rooms use `room.yaml` as the canonical definition and export engine/harness from `index.js`. They also include `manifest.json` for backward compatibility.
+
+```text
+room-plugins/
+  my-optimizer/
+    room.yaml             # Declarative definition (canonical)
+    manifest.json         # Classic compat
+    index.js              # Exports engine + harness (declarative) AND manifest + createPlugin (classic)
+    lib-deps.txt          # Shared library dependencies (optional)
+    lib/
+    package.json          # optional
+```
+
+See [`DECLARATIVE_ROOMS.md`](./DECLARATIVE_ROOMS.md) for the full declarative room contract.
 
 ## 3. `index.js` Export Contract
 

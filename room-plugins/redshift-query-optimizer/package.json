@@ -7,6 +7,7 @@
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "js-yaml": "^4.1.1",
     "vitest": "^3.0.0"
   },
   "scripts": {

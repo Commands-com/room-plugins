@@ -36,6 +36,8 @@ Expected result: one fan-out cycle runs, then the room stops with a summary simi
 
 ## 3. Create Your Plugin
 
+### Option A: Classic (imperative)
+
 ```bash
 cp -R ./room-plugins/template-room ./room-plugins/my-room
 ```
@@ -46,6 +48,22 @@ Update both files:
 - `./room-plugins/my-room/index.js`
 
 Keep `manifest.json` and the exported `manifest` in `index.js` exactly aligned.
+
+### Option B: Declarative (family-based)
+
+For rooms that follow an established pattern like empirical search:
+
+```bash
+cp -R ./room-plugins/redshift-query-optimizer ./room-plugins/my-optimizer
+```
+
+Update:
+
+- `room.yaml` — room definition (phases, dispatch, dashboard, family config)
+- `lib/engine.js` — domain-specific logic
+- `lib/harness.js` — environment interaction
+
+See [`docs/DECLARATIVE_ROOMS.md`](./docs/DECLARATIVE_ROOMS.md) for the full reference.
 
 ## 4. Reinstall and Reload
 
@@ -96,6 +114,10 @@ Read [`docs/CONTRACT.md`](./docs/CONTRACT.md) for:
 - timeout, pause, and failure semantics
 - loader security and allowlist behavior
 
-For dashboard authoring details (panel types, field shapes, and metrics payloads), use:
+For declarative rooms (`room.yaml`, engine/harness, family runtimes):
+
+- [`docs/DECLARATIVE_ROOMS.md`](./docs/DECLARATIVE_ROOMS.md)
+
+For dashboard authoring details (panel types, field shapes, and metrics payloads):
 
 - [`docs/DASHBOARD_GUIDE.md`](./docs/DASHBOARD_GUIDE.md)

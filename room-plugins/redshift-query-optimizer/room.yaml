@@ -1,0 +1,348 @@
+apiVersion: room/v1
+kind: declarative_room
+
+metadata:
+  id: redshift_query_optimizer
+  orchestratorType: redshift_query_optimizer
+  name: Redshift Query Optimizer
+  description: Empirical SQL performance tuning for Amazon Redshift — rewrite queries, benchmark on-cluster, and recommend sort/dist key changes.
+  family: empirical_search
+
+display:
+  typeLabel: Redshift Query Optimizer
+  typeTag: SQL
+  cycleNoun: Cycle
+  reportTitle: Redshift Query Optimization Report
+  defaultAddRole: explorer
+  defaultRoster:
+    - role: explorer
+      displayName: Schema Analyst
+    - role: builder
+      displayName: Query Architect
+    - role: auditor
+      displayName: DBA Auditor
+  activityMessages:
+    idle: Waiting...
+    discovery: Analyzing query plan and table metadata
+    fanOut: Benchmarking rewrites on cluster
+    singleTurn: Worker optimizing query...
+    synthesis: Agents voting on best deployment plan
+    planning: Choosing next tuning strategy
+
+objective:
+  required: false
+  placeholder: "Optional: add constraints or priorities (e.g. \"minimize redistribution steps\", \"avoid table rebuilds\", \"focus on the orders ↔ line_items join\")"
+
+roles:
+  required: [explorer, builder, auditor]
+  optional: []
+  forbidden: [implementer, reviewer, worker]
+  minCount:
+    explorer: 1
+    builder: 1
+    auditor: 1
+
+limits:
+  maxCycles: { default: 4, min: 1, max: 10 }
+  maxTurns: { default: 60, min: 4, max: 500 }
+  maxDurationMs: { default: 3600000, min: 60000, max: 14400000 }
+  maxFailures: { default: 5, min: 1, max: 20 }
+  agentTimeoutMs: { default: 1800000, min: 10000, max: 3600000 }
+  pluginHookTimeoutMs: { default: 120000, min: 5000, max: 600000 }
+  llmTimeoutMs: { default: 60000, min: 10000, max: 300000 }
+  turnFloorRole: explorer
+  turnFloorFormula: "1 + N"
+
+roomConfig:
+  fields:
+    - key: dbUrl
+      type: string
+      label: Redshift URL
+      required: true
+      placeholder: "postgres://user:pass@cluster.region.redshift.amazonaws.com:5439/db"
+      helpText: Redshift connection string. Uses the Postgres wire protocol.
+    - key: slowQuery
+      type: text
+      label: Target Query
+      required: true
+      multiline: true
+      rows: 8
+      placeholder: "SELECT * FROM large_table WHERE..."
+      helpText: SQL to optimize. Must be a read-only SELECT or WITH...SELECT with concrete values.
+    - key: schemaFilter
+      type: string[]
+      label: Include Tables
+      required: false
+      helpText: Limit schema analysis to these tables. Leave empty to analyze all tables referenced by the query.
+    - key: outputDir
+      type: directory
+      label: Output Directory
+      required: false
+
+supportsQuorum: true
+
+endpointConstraints:
+  requiresLocalParticipant: true
+  perRole: {}
+
+lanes:
+  explorer:
+    fromRoles: [explorer]
+  builder:
+    fromRoles: [builder]
+  auditor:
+    fromRoles: [auditor]
+
+familyConfig:
+  strategyTypes: [rewrite, sort_dist]
+  measuredStrategyTypes: [rewrite]
+  plannedCandidatesPerCycle: 4
+  promoteTopK: 2
+  maxRetestCandidates: 2
+  plateauCycles: 2
+  targetImprovementPct: 20
+  supportsSchemaRepair: true
+  supportsBaselineRetest: true
+
+configSchema:
+  plannedCandidatesPerCycle: { type: integer, min: 1, max: 10, default: 4 }
+  promoteTopK: { type: integer, min: 1, max: 5, default: 2 }
+  maxRetestCandidates: { type: integer, min: 1, max: 3, default: 2 }
+  maxRiskScore: { type: integer, min: 0, max: 10, default: 7 }
+  targetImprovementPct: { type: number, min: 0, max: 1000, default: 20 }
+  warmupRuns: { type: integer, min: 1, max: 20, default: 2 }
+  benchmarkTrials: { type: integer, min: 3, max: 50, default: 5 }
+  plateauCycles: { type: integer, min: 1, max: 5, default: 2 }
+
+setup:
+  compatibilityGate:
+    enabled: true
+    title: Redshift Optimizer Preflight
+    description: Verify Redshift cluster connectivity and query validity before starting.
+    checkLabel: Verify Connection
+    fixLabel: Setup Tuner Workspace
+    allowMakeCompatible: true
+
+phases:
+  initial: preflight
+  states:
+    - id: preflight
+      dispatch: none
+      onComplete:
+        next: baseline
+
+    - id: baseline
+      dispatch: builder
+      prompt: baseline
+      onComplete:
+        next: planning
+
+    - id: planning
+      dispatch:
+        lane: explorer
+        mode: all
+      prompt: planning
+      onComplete:
+        when:
+          - if: hasMeasuredPromotions
+            next: cycle
+          - if: hasAdvisoryOnlyPromotions
+            next: audit
+          - if: noCandidatesProduced
+            next: complete
+          - else: frontier_refine
+
+    - id: cycle
+      dispatch:
+        lane: builder
+        mode: count
+        count: 4
+        selection: round_robin
+      prompt: cycle
+      onComplete:
+        when:
+          - if: builtNewCandidates
+            next: audit
+          - if: schemaRepairNeeded
+            next: schema_repair
+          # No new candidates, no schema repair — finishCycle runs inline,
+          # predicates evaluate the result.
+          - if: needsRetest
+            next: frontier_refine
+          - if: stopReasonPresent
+            next: synthesis
+          - else: planning
+
+    - id: audit
+      dispatch: auditor
+      prompt: audit
+      onComplete:
+        when:
+          - if: needsRetest
+            next: frontier_refine
+          - if: stopReasonPresent
+            next: synthesis
+          - else: planning
+
+    - id: schema_repair
+      dispatch: auditor
+      prompt: schema_repair
+      onComplete:
+        when:
+          - if: needsRetest
+            next: frontier_refine
+          - if: stopReasonPresent
+            next: synthesis
+          - else: planning
+
+    - id: frontier_refine
+      dispatch: builder
+      prompt: retest
+      onComplete:
+        when:
+          - if: stopReasonPresent
+            next: synthesis
+          - else: planning
+
+    - id: synthesis
+      dispatch:
+        lane: explorer
+        mode: all
+      prompt: synthesis
+      emitPhase: synthesis
+      onComplete:
+        next: complete
+
+    - id: complete
+      dispatch: none
+
+prompts:
+  baseline:
+    contextBindings:
+      - config.dbUrl
+      - config.slowQuery
+  planning:
+    contextBindings:
+      - config.slowQuery
+      - state.baselines
+      - state.tableMetadata
+  cycle:
+    contextBindings:
+      - config.slowQuery
+      - state.currentPlan
+      - state.frontier
+  audit:
+    contextBindings:
+      - state.candidates
+      - state.baselines
+  retest:
+    contextBindings:
+      - state.promotions
+      - state.baselines
+  schema_repair:
+    contextBindings:
+      - state.lastFailureReason
+      - state.tableMetadata
+  synthesis:
+    contextBindings:
+      - state.candidates
+      - state.frontier
+      - state.baselines
+
+dashboard:
+  panels:
+    - type: text
+      key: preflightStatus
+      label: Setup Progress
+    - type: phase
+      key: currentPhase
+      label: Phase
+      phases: [preflight, baseline, analysis, codegen, static_audit, frontier_refine, synthesis, complete]
+      phaseLabels:
+        preflight: Preflight
+        baseline: Baseline
+        analysis: Analysis
+        codegen: Codegen
+        static_audit: Static Audit
+        frontier_refine: Refine
+        synthesis: Synthesis
+        complete: Complete
+    - type: table
+      key: baselines
+      label: Baseline
+      columns:
+        - { key: metric, label: Metric, width: 160 }
+        - { key: value, label: Value, width: 200 }
+    - type: counter-group
+      key: candidateSummary
+      label: Strategies
+      counters:
+        - { key: proposed, label: Proposed, color: gray }
+        - { key: promoted, label: Promoted, color: blue }
+        - { key: benchmarked, label: Benchmarked, color: green }
+        - { key: frontier, label: Frontier, color: orange }
+        - { key: rejected, label: Rejected, color: red }
+    - type: progress
+      key: cycleProgress
+      label: Cycle Progress
+      format: "{value} / {max}"
+    - type: progress
+      key: bestImprovementPct
+      label: Best Speedup
+      format: "{value}%"
+    - type: code-blocks
+      key: solutions
+      label: Solutions
+      language: sql
+    - type: code-blocks
+      key: advisoryRecommendations
+      label: Table Design Recommendations
+      language: sql
+    - type: code-blocks
+      key: recommendedPlan
+      label: Recommended Deployment Plan
+      language: sql
+    - type: table
+      key: frontier
+      label: Frontier
+      columns:
+        - { key: cycle, label: Cycle, width: 50 }
+        - { key: strategyType, label: Type, width: 100 }
+        - { key: proposalId, label: Proposal, width: 180 }
+        - { key: medianMs, label: "Time (ms)", width: 100 }
+        - { key: speedupPct, label: "Speedup %", width: 100 }
+        - { key: riskScore, label: Risk, width: 60 }
+        - { key: status, label: Status, width: 90 }
+        - { key: owner, label: Builder, width: 120 }
+      sortable: true
+    - type: table
+      key: candidates
+      label: All Attempts
+      columns:
+        - { key: cycle, label: Cycle, width: 50 }
+        - { key: strategyType, label: Type, width: 100 }
+        - { key: proposalId, label: Proposal, width: 180 }
+        - { key: medianMs, label: "Time (ms)", width: 100 }
+        - { key: speedupPct, label: "Speedup %", width: 100 }
+        - { key: status, label: Status, width: 90 }
+        - { key: riskScore, label: Risk, width: 60 }
+        - { key: owner, label: Builder, width: 120 }
+        - { key: notes, label: Notes, width: 300 }
+      sortable: true
+
+report:
+  summaryMetrics: [bestImprovementPct, candidateSummary]
+  table:
+    metricKey: candidates
+    columns:
+      - { key: cycle, label: Cycle, width: 50 }
+      - { key: strategyType, label: Type, width: 120 }
+      - { key: medianMs, label: "Execution (ms)", width: 110 }
+      - { key: speedupPct, label: "Speedup %", width: 100 }
+      - { key: status, label: Status, width: 90 }
+      - { key: owner, label: Builder, width: 120 }
+      - { key: notes, label: Notes, width: 300 }
+  codeBlocks:
+    - { metricKey: recommendedPlan, label: Recommended Deployment Plan, language: sql }
+    - { metricKey: solutions, label: All Solutions, language: sql }
+    - { metricKey: advisoryRecommendations, label: Table Design Recommendations, language: sql }
