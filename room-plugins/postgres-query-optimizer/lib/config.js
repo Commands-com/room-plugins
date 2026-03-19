@@ -7,14 +7,10 @@ const execAsync = promisify(execCb);
 
 import { DEFAULTS, POSTGRES_VERSIONS } from './constants.js';
 import {
-  clampInt,
-  detectVolatileFunctions,
-  isReadOnlyQuery,
-  isSafeSubpath,
-  normalizeStringArray,
-  parseConnectionUrl,
-  safeTrim,
-} from './utils.js';
+  clampInt, isReadOnlyQuery, isSafeSubpath, normalizeStringArray, safeTrim,
+  buildOrchestratorConfig,
+} from '../../sql-optimizer-core/index.js';
+import { detectVolatileFunctions, parseConnectionUrl } from './utils.js';
 import { checkDockerAvailability, detectSourceVersion } from './harness.js';
 
 // ---------------------------------------------------------------------------
@@ -81,16 +77,7 @@ export function normalizeRoomConfig(input = {}) {
 export function getConfig(ctx) {
   const roomConfig = normalizeRoomConfig(ctx?.roomConfig || {});
   return {
-    plannedCandidatesPerCycle: clampInt(ctx?.orchestratorConfig?.plannedCandidatesPerCycle, 1, 10, DEFAULTS.plannedCandidatesPerCycle),
-    promoteTopK: clampInt(ctx?.orchestratorConfig?.promoteTopK, 1, 5, DEFAULTS.promoteTopK),
-    maxRetestCandidates: clampInt(ctx?.orchestratorConfig?.maxRetestCandidates, 1, 3, DEFAULTS.maxRetestCandidates),
-    maxRiskScore: clampInt(ctx?.orchestratorConfig?.maxRiskScore, 0, 10, DEFAULTS.maxRiskScore),
-    targetImprovementPct: Number.isFinite(Number(ctx?.orchestratorConfig?.targetImprovementPct))
-      ? Math.max(0, Math.min(1000, Number(ctx.orchestratorConfig.targetImprovementPct)))
-      : DEFAULTS.targetImprovementPct,
-    warmupRuns: clampInt(ctx?.orchestratorConfig?.warmupRuns, 1, 20, DEFAULTS.warmupRuns),
-    benchmarkTrials: clampInt(ctx?.orchestratorConfig?.benchmarkTrials, 3, 50, DEFAULTS.benchmarkTrials),
-    plateauCycles: clampInt(ctx?.orchestratorConfig?.plateauCycles, 1, 5, DEFAULTS.plateauCycles),
+    ...buildOrchestratorConfig(ctx, DEFAULTS),
     containerMemory: DEFAULTS.containerMemory,
     containerCpus: DEFAULTS.containerCpus,
     ...roomConfig,

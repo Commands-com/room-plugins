@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { quoteIdent, extractQueryTableRefs } from '../lib/utils.js';
+import { quoteIdent } from '../lib/utils.js';
+import { extractQueryTableRefs } from '../../sql-optimizer-core/index.js';
 
 describe('quoteIdent', () => {
   it('quotes a simple name', () => {

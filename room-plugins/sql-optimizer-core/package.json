@@ -7,5 +7,11 @@
   "exports": {
     ".": "./index.js"
   },
-  "description": "Shared core library for SQL optimizer room plugins"
+  "description": "Shared core library for SQL optimizer room plugins",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0"
+  }
 }

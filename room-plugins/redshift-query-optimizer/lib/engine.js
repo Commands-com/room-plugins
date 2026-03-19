@@ -19,7 +19,7 @@ const COST_SENTINEL_THRESHOLD = 1e15;
 import {
   normalizeStringArray, safeTrim, optionalFiniteNumber,
   findCandidateById,
-  buildAuditSummaryLines,
+  buildAuditSummaryLines, buildCommonBaselineRows, buildWinnerBlockHeader,
 } from '../../sql-optimizer-core/index.js';
 import {
   buildBaselineTargets, buildDiscoveryTargets, buildCycleTargets,
@@ -148,34 +148,25 @@ function extendBuilderResult(normalized, raw) {
 // ---------------------------------------------------------------------------
 
 function buildWinnerBlock(candidate, label) {
-  if (!candidate) return null;
-  const speedup = Number.isFinite(candidate.speedupPct)
-    ? `${candidate.speedupPct.toFixed(1)}%`
-    : 'N/A';
-  const baselineMs = Number.isFinite(candidate.baseline?.medianMs)
-    ? `${candidate.baseline.medianMs.toFixed(1)}ms`
-    : '?';
-  const candidateMs = Number.isFinite(candidate.result?.medianMs)
-    ? `${candidate.result.medianMs.toFixed(1)}ms`
-    : '?';
-  const risk = Number.isFinite(candidate.riskScore) ? `${candidate.riskScore}/10` : '?';
+  const header = buildWinnerBlockHeader(candidate, label);
+  if (!header) return null;
 
   const lines = [];
   if (candidate.strategyType === 'sort_dist') {
-    lines.push(`-- ${label} [ADVISORY — not benchmarked]`);
+    lines.push(`-- ${header.label} [ADVISORY — not benchmarked]`);
     lines.push(`-- Recommendation:`);
     lines.push(candidate.applySQL || '-- no SQL available');
-    lines.push(`-- Risk: ${risk}`);
+    lines.push(`-- Risk: ${header.risk}`);
     if (candidate.rationale) {
       lines.push(`-- Rationale: ${candidate.rationale}`);
     }
     lines.push(`-- NOTE: Requires table rebuild. Test on a staging cluster before production.`);
   } else {
-    lines.push(`-- ${label}`);
+    lines.push(`-- ${header.label}`);
     lines.push(`-- Optimized Query:`);
     lines.push(candidate.targetQuery || candidate.applySQL || '-- no SQL available');
-    lines.push(`-- Speedup: ${speedup} (${baselineMs} → ${candidateMs}) — measured on cluster`);
-    lines.push(`-- Risk: ${risk}`);
+    lines.push(`-- Speedup: ${header.speedup} (${header.baselineMs} → ${header.candidateMs}) — measured on cluster`);
+    lines.push(`-- Risk: ${header.risk}`);
 
     // Distribution step changes
     const baselineDist = candidate.baseline?.distSteps || [];
@@ -217,10 +208,7 @@ function buildEngineBaselineRows(state) {
   const b = state?.baselines;
   if (!b) return [];
 
-  const rows = [];
-  if (Number.isFinite(b.medianMs)) rows.push({ metric: 'Median', value: `${b.medianMs.toFixed(2)} ms` });
-  if (Number.isFinite(b.p95Ms)) rows.push({ metric: 'P95', value: `${b.p95Ms.toFixed(2)} ms` });
-  if (Number.isFinite(b.cvPct)) rows.push({ metric: 'CV%', value: `${b.cvPct.toFixed(1)}%` });
+  const rows = buildCommonBaselineRows(b);
   if (Array.isArray(b.stepTypes) && b.stepTypes.length > 0) {
     rows.push({ metric: 'Plan Steps', value: b.stepTypes.join(', ') });
   }

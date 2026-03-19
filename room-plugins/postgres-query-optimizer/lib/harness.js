@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BENCHMARK_GUCS, DEFAULTS, LEAF_ACCESS_NODE_TYPES } from './constants.js';
-import { containerName, extractQueryTableRefs, networkName, quoteIdent, rewriteLocalhostForDocker, sanitizeSQL } from './utils.js';
+import { extractQueryTableRefs, sanitizeSQL } from '../../sql-optimizer-core/index.js';
+import { containerName, networkName, quoteIdent, rewriteLocalhostForDocker } from './utils.js';
 
 const execAsync = promisify(execCb);
 

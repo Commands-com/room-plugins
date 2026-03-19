@@ -4,6 +4,7 @@
 export {
   safeTrim, clampInt, optionalFiniteNumber, optionalInteger,
   normalizeStringArray, isSafeSubpath, isReadOnlyQuery, sanitizeSQL, extractQueryTableRefs,
+  buildOrchestratorConfig,
 } from './lib/utils.js';
 
 export {
@@ -27,7 +28,8 @@ export {
 
 export {
   buildFrontierRows, buildCandidateRows, countCandidateSummary,
-  buildAuditSummaryLines, buildSolutionsMetric, emitStateMetrics,
+  buildAuditSummaryLines, buildCommonBaselineRows, buildWinnerBlockHeader,
+  buildSolutionsMetric, emitStateMetrics,
 } from './lib/report.js';
 
 export {
@@ -35,3 +37,7 @@ export {
   buildRecentFailureDiagnostics, buildFrontierSummary,
   buildDataWarningsSection, buildSchemaRepairTargets, buildPendingDecision,
 } from './lib/planning.js';
+
+export {
+  createBasePlugin, collectSchemaRepairBuilderResponses,
+} from './lib/state-machine.js';

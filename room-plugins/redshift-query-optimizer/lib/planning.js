@@ -391,12 +391,13 @@ export function buildAuditTargets(ctx, state, config) {
   const rewriteSummary = rewriteCandidates.map((c) => [
     `- ${c.proposalId} (rewrite):`,
     `  speedup ${c.speedupPct?.toFixed(1) || '?'}%,`,
+    `  rewritten query: ${c.targetQuery || c.applySQL || 'no SQL'},`,
     `  dist steps: ${(c.result?.distSteps || []).join(', ') || 'unknown'}`,
   ].join(' ')).join('\n');
 
   const advisorySummary = advisoryCandidates.map((c) => [
     `- ${c.proposalId} (sort_dist):`,
-    `  ${c.applySQL?.slice(0, 200) || 'no SQL'}`,
+    `  ${c.applySQL || c.targetQuery || 'no SQL'}`,
     `  rationale: ${c.rationale || c.notes || 'none'}`,
   ].join(' ')).join('\n');
 
@@ -430,6 +431,14 @@ export function buildAuditTargets(ctx, state, config) {
       `- 4-6: Moderate — may increase bytes scanned, adds redistribution, or changes result ordering`,
       `- 7-8: High — table rebuild required, WLM queue impact, concurrency scaling concern`,
       `- 9-10: Critical — affects production ETL windows, potential data access issues`,
+      '',
+      `IMPORTANT FOR REWRITES: Rewrite candidates have ALREADY passed an automated result parity check`,
+      `(EXCEPT ALL in both directions returned zero differing rows). Do NOT reject a rewrite because you`,
+      `disagree with the original query's semantics or design choices. The rewrite's job is to produce the`,
+      `same results faster — if parity passed, semantic equivalence is verified. Only flag rewrite risk if`,
+      `the rewrite could behave differently under concurrent writes, relies on optimizer behavior that may`,
+      `change across engine versions, or introduces execution-order dependencies.`,
+      `Do NOT reject rewrites for concerns that apply equally to the original query.`,
       '',
       `## Redshift-Specific Risk Dimensions`,
       `1. **Redistribute cost** — does the rewrite add or remove DS_DIST/DS_BCAST steps?`,

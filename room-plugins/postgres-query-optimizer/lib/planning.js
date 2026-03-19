@@ -337,12 +337,17 @@ export function buildAuditTargets(ctx, state, config) {
     .filter((c) => c.cycleIndex === state.cycleIndex && c.status !== 'rejected')
     .slice(-10);
 
-  const candidateSummary = recentCandidates.map((c) => [
-    `- ${c.proposalId} (${c.strategyType}):`,
-    `  speedup ${c.speedupPct?.toFixed(1) || '?'}%,`,
-    `  ${c.applySQL?.slice(0, 200) || 'no SQL'}`,
-    c.indexSizeBytes ? `  index size: ${(c.indexSizeBytes / (1024 * 1024)).toFixed(2)}MB` : '',
-  ].filter(Boolean).join(' ')).join('\n');
+  const candidateSummary = recentCandidates.map((c) => {
+    const sql = c.strategyType === 'rewrite'
+      ? (c.targetQuery || c.applySQL || 'no SQL')
+      : (c.applySQL || 'no SQL');
+    return [
+      `- ${c.proposalId} (${c.strategyType}):`,
+      `  speedup ${c.speedupPct?.toFixed(1) || '?'}%,`,
+      c.strategyType === 'rewrite' ? `  rewritten query: ${sql}` : `  ${sql}`,
+      c.indexSizeBytes ? `  index size: ${(c.indexSizeBytes / (1024 * 1024)).toFixed(2)}MB` : '',
+    ].filter(Boolean).join(' ');
+  }).join('\n');
 
   // Thread production telemetry data to auditor when available
   const telemetrySection = [];
@@ -382,6 +387,15 @@ export function buildAuditTargets(ctx, state, config) {
       `are NOT risk — they are procedure. Every index requires these steps. Do NOT inflate the risk score`,
       `for standard deployment procedure. Only score risk for things specific to THIS candidate that go`,
       `beyond normal index deployment practice.`,
+      '',
+      `IMPORTANT FOR REWRITES: Rewrite candidates have ALREADY passed an automated result parity check`,
+      `(EXCEPT ALL in both directions returned zero differing rows). Do NOT reject a rewrite because you`,
+      `disagree with the original query's semantics or design choices. The rewrite's job is to produce the`,
+      `same results faster — if parity passed, semantic equivalence is verified. Only flag rewrite risk if:`,
+      `- The rewrite could behave differently under concurrent writes (e.g., isolation level sensitivity)`,
+      `- The rewrite relies on optimizer behavior that may change across Postgres versions`,
+      `- The rewrite introduces execution-order dependencies (e.g., volatile function call count changes)`,
+      `Do NOT reject rewrites for concerns that apply equally to the original query.`,
       '',
       `## Risk Dimensions to Evaluate`,
       `1. Lock contention: only if the table has high write QPS AND the index build would be unusually slow`,

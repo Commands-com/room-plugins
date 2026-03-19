@@ -61,6 +61,39 @@ export function countCandidateSummary(state) {
   };
 }
 
+/**
+ * Common baseline metric rows shared by all engines (median, p95, CV%, trials).
+ * Engine-specific rows (leafAccessNodes, stepTypes, etc.) should be appended
+ * by the engine's buildEngineBaselineRows after calling this.
+ */
+export function buildCommonBaselineRows(baselines) {
+  if (!baselines) return [];
+  const rows = [];
+  if (Number.isFinite(baselines.medianMs)) rows.push({ metric: 'Median', value: `${baselines.medianMs.toFixed(2)} ms` });
+  if (Number.isFinite(baselines.p95Ms)) rows.push({ metric: 'P95', value: `${baselines.p95Ms.toFixed(2)} ms` });
+  if (Number.isFinite(baselines.cvPct)) rows.push({ metric: 'CV%', value: `${baselines.cvPct.toFixed(1)}%` });
+  return rows;
+}
+
+/**
+ * Common winner block header lines shared by all engines.
+ * Returns the speedup/timing/risk prefix that every engine renders the same way.
+ */
+export function buildWinnerBlockHeader(candidate, label) {
+  if (!candidate) return null;
+  const speedup = Number.isFinite(candidate.speedupPct)
+    ? `${candidate.speedupPct.toFixed(1)}%`
+    : 'N/A';
+  const baselineMs = Number.isFinite(candidate.baseline?.medianMs)
+    ? `${candidate.baseline.medianMs.toFixed(1)}ms`
+    : '?';
+  const candidateMs = Number.isFinite(candidate.result?.medianMs)
+    ? `${candidate.result.medianMs.toFixed(1)}ms`
+    : '?';
+  const risk = Number.isFinite(candidate.riskScore) ? `${candidate.riskScore}/10` : '?';
+  return { label, speedup, baselineMs, candidateMs, risk };
+}
+
 export function buildAuditSummaryLines(candidate) {
   const lines = [];
   const findings = candidate.auditFindings || [];

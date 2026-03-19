@@ -52,6 +52,27 @@ export function sanitizeSQL(sql, maxLen = 50000) {
   return sql.trim().slice(0, maxLen);
 }
 
+/**
+ * Build the orchestrator config block shared by all engines.
+ * Each engine provides its own DEFAULTS; this function reads ctx.orchestratorConfig
+ * and clamps values into safe ranges using the engine's defaults as fallbacks.
+ */
+export function buildOrchestratorConfig(ctx, defaults) {
+  const oc = ctx?.orchestratorConfig || {};
+  return {
+    plannedCandidatesPerCycle: clampInt(oc.plannedCandidatesPerCycle, 1, 10, defaults.plannedCandidatesPerCycle),
+    promoteTopK: clampInt(oc.promoteTopK, 1, 5, defaults.promoteTopK),
+    maxRetestCandidates: clampInt(oc.maxRetestCandidates, 1, 3, defaults.maxRetestCandidates),
+    maxRiskScore: clampInt(oc.maxRiskScore, 0, 10, defaults.maxRiskScore),
+    targetImprovementPct: Number.isFinite(Number(oc.targetImprovementPct))
+      ? Math.max(0, Math.min(1000, Number(oc.targetImprovementPct)))
+      : defaults.targetImprovementPct,
+    warmupRuns: clampInt(oc.warmupRuns, 1, 20, defaults.warmupRuns),
+    benchmarkTrials: clampInt(oc.benchmarkTrials, 3, 50, defaults.benchmarkTrials),
+    plateauCycles: clampInt(oc.plateauCycles, 1, 5, defaults.plateauCycles),
+  };
+}
+
 export function extractQueryTableRefs(sql) {
   if (!sql || typeof sql !== 'string') return [];
   const cleaned = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');

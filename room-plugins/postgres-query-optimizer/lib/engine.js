@@ -13,7 +13,7 @@ import {
 import {
   normalizeStringArray, safeTrim, optionalFiniteNumber,
   findCandidateById,
-  buildAuditSummaryLines,
+  buildAuditSummaryLines, buildCommonBaselineRows, buildWinnerBlockHeader,
 } from '../../sql-optimizer-core/index.js';
 import {
   buildBaselineTargets, buildDiscoveryTargets, buildCycleTargets,
@@ -99,34 +99,25 @@ function extendBuilderResult(normalized, raw) {
 // ---------------------------------------------------------------------------
 
 function buildWinnerBlock(candidate, label) {
-  if (!candidate) return null;
-  const speedup = Number.isFinite(candidate.speedupPct)
-    ? `${candidate.speedupPct.toFixed(1)}%`
-    : 'N/A';
-  const baselineMs = Number.isFinite(candidate.baseline?.medianMs)
-    ? `${candidate.baseline.medianMs.toFixed(1)}ms`
-    : '?';
-  const candidateMs = Number.isFinite(candidate.result?.medianMs)
-    ? `${candidate.result.medianMs.toFixed(1)}ms`
-    : '?';
-  const risk = Number.isFinite(candidate.riskScore) ? `${candidate.riskScore}/10` : '?';
+  const header = buildWinnerBlockHeader(candidate, label);
+  if (!header) return null;
 
   const lines = [];
   if (candidate.strategyType === 'index') {
-    lines.push(`-- ${label}`);
+    lines.push(`-- ${header.label}`);
     lines.push(`-- Deploy with:`);
     lines.push(candidate.deploySQL || candidate.applySQL || '-- no SQL available');
-    lines.push(`-- Speedup: ${speedup} (${baselineMs} → ${candidateMs}) — benchmarked independently`);
-    lines.push(`-- Risk: ${risk}`);
+    lines.push(`-- Speedup: ${header.speedup} (${header.baselineMs} → ${header.candidateMs}) — benchmarked independently`);
+    lines.push(`-- Risk: ${header.risk}`);
     if (Number.isFinite(candidate.indexSizeBytes)) {
       lines.push(`-- Storage: ~${(candidate.indexSizeBytes / (1024 * 1024)).toFixed(1)}MB`);
     }
   } else {
-    lines.push(`-- ${label}`);
+    lines.push(`-- ${header.label}`);
     lines.push(`-- Optimized Query:`);
     lines.push(candidate.targetQuery || candidate.applySQL || '-- no SQL available');
-    lines.push(`-- Speedup: ${speedup} (${baselineMs} → ${candidateMs})`);
-    lines.push(`-- Risk: ${risk}`);
+    lines.push(`-- Speedup: ${header.speedup} (${header.baselineMs} → ${header.candidateMs})`);
+    lines.push(`-- Risk: ${header.risk}`);
   }
   if (candidate.deployNotes) {
     lines.push(`-- ${candidate.deployNotes}`);
@@ -154,10 +145,7 @@ function buildEngineBaselineRows(state) {
   const b = state?.baselines;
   if (!b) return [];
 
-  const rows = [];
-  if (Number.isFinite(b.medianMs)) rows.push({ metric: 'Median', value: `${b.medianMs.toFixed(2)} ms` });
-  if (Number.isFinite(b.p95Ms)) rows.push({ metric: 'P95', value: `${b.p95Ms.toFixed(2)} ms` });
-  if (Number.isFinite(b.cvPct)) rows.push({ metric: 'CV%', value: `${b.cvPct.toFixed(1)}%` });
+  const rows = buildCommonBaselineRows(b);
   if (Array.isArray(b.leafAccessNodes) && b.leafAccessNodes.length > 0) {
     rows.push({ metric: 'Leaf Access', value: b.leafAccessNodes.join(', ') });
   }
