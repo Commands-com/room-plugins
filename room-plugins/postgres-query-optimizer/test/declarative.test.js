@@ -175,9 +175,36 @@ describe('room.yaml', () => {
 
   it('has roomConfig fields with visibleWhen conditions', () => {
     const schemaSource = def.roomConfig.fields.find((f) => f.key === 'schemaSource');
-    expect(schemaSource.visibleWhen).toEqual({ demoMode: false });
+    expect(schemaSource.visibleWhen).toEqual({ demoMode: false, showAdvanced: true });
     const dbUrl = def.roomConfig.fields.find((f) => f.key === 'dbUrl');
-    expect(Array.isArray(dbUrl.visibleWhen)).toBe(true);
+    expect(dbUrl.visibleWhen).toEqual({ demoMode: false });
+  });
+
+  it('has showAdvanced toggle that gates advanced fields', () => {
+    const advancedToggle = def.roomConfig.fields.find((f) => f.key === 'showAdvanced');
+    expect(advancedToggle.type).toBe('boolean');
+    expect(advancedToggle.default).toBe(false);
+    const advancedFields = ['schemaSource', 'seedDataPath', 'seedFromSource',
+      'postgresVersion', 'schemaFilter', 'scaleFactor', 'containerMemory', 'productionStats'];
+    for (const key of advancedFields) {
+      const field = def.roomConfig.fields.find((f) => f.key === key);
+      const when = field.visibleWhen;
+      expect(when.showAdvanced, `${key} should require showAdvanced`).toBe(true);
+    }
+  });
+
+  it('has section dividers for advanced groups', () => {
+    const sections = def.roomConfig.fields.filter((f) => f.type === 'section');
+    expect(sections.length).toBe(2);
+    expect(sections[0].key).toBe('_schemaSection');
+    expect(sections[1].key).toBe('_harnessSection');
+  });
+
+  it('has fullWidth on wide fields', () => {
+    const dbUrl = def.roomConfig.fields.find((f) => f.key === 'dbUrl');
+    expect(dbUrl.fullWidth).toBe(true);
+    const slowQuery = def.roomConfig.fields.find((f) => f.key === 'slowQuery');
+    expect(slowQuery.fullWidth).toBe(true);
   });
 });
 
@@ -250,8 +277,8 @@ describe('manifest compilation', () => {
   });
 
   it('preserves visibleWhen conditions', () => {
-    expect(compiled.roomConfigSchema.schemaSource.visibleWhen).toEqual({ demoMode: false });
-    expect(compiled.roomConfigSchema.dbUrl.visibleWhen).toEqual(existing.roomConfigSchema.dbUrl.visibleWhen);
+    expect(compiled.roomConfigSchema.schemaSource.visibleWhen).toEqual({ demoMode: false, showAdvanced: true });
+    expect(compiled.roomConfigSchema.dbUrl.visibleWhen).toEqual({ demoMode: false });
   });
 
   it('produces matching setup', () => {
