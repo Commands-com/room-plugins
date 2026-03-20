@@ -16,6 +16,8 @@ Works with packaged installs — no source repo needed.
 Room Start  ──>  Orchestrator Plugin  ──>  Fan-out / Workers  ──>  Results
 ```
 
+https://github.com/user-attachments/assets/7c6ddcd6-45db-4b71-9838-c8f262bd4e7f
+
 </div>
 
 ---
