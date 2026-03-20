@@ -1,0 +1,13 @@
+{
+  "label": "planning",
+  "responses": [
+    {
+      "agentId": "explorer_1",
+      "response": "{\n  \"summary\": \"Analysis of query bottleneck: index additions and subquery elimination for slow query\",\n  \"candidateProposals\": [\n    {\n      \"proposalId\": \"idx_orders_user_created\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_orders_user_created ON orders(user_id, created_at);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_orders_user_created;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders(user_id, created_at);\",\n      \"targetQuery\": null,\n      \"notes\": \"Covers the WHERE + ORDER BY pattern. Index on user_id and created_at to speed up the query.\",\n      \"expectedImpact\": \"high\"\n    },\n    {\n      \"proposalId\": \"idx_products_category_id\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_products_category_id ON products(category_id);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_products_category_id;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_products_category_id ON products(category_id);\",\n      \"targetQuery\": null,\n      \"notes\": \"Index on category_id to speed up the join with categories. Reduces the number of rows in the join.\",\n      \"expectedImpact\": \"high\"\n    },\n    {\n      \"proposalId\": \"idx_orders_created_at\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_orders_created_at ON orders(created_at);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_orders_created_at;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_orders_created_at ON orders(created_at);\",\n      \"targetQuery\": null,\n      \"notes\": \"Index on created_at to speed up the date trunc and filtering. Speeds up the query significantly.\",\n      \"expectedImpact\": \"high\"\n    },\n    {\n      \"proposalId\": \"subquery_elimination\",\n      \"strategyType\": \"rewrite\",\n      \"applySQL\": null,\n      \"rollbackSQL\": null,\n      \"deploySQL\": null,\n      \"targetQuery\": \"(SELECT ROUND(AVG(o2.total_cents))\\nFROM orders o2\\nWHERE o2.status = 'completed'\\n  AND DATE_TRUNC('month', o2.created_at) = DATE_TRUNC('month', o.created_at)\\nGROUP BY o2.id) AS avg_order_value_cents\",\n      \"notes\": \"Rewrite subquery to use join and grouping. Eliminates the need for correlated subquery and speeds up the query.\",\n      \"expectedImpact\": \"high\"\n    }\n  ]\n}",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

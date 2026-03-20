@@ -1,0 +1,13 @@
+{
+  "label": "planning",
+  "responses": [
+    {
+      "agentId": "explorer_1",
+      "response": "{\n  \"summary\": \"Analysis of query bottleneck: Slow correlated subquery for avg order value\",\n  \"candidateProposals\": [\n    {\n      \"proposalId\": \"idx_orders_user_created\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_orders_user_created ON orders(user_id, created_at);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_orders_user_created;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_orders_user_created ON orders(user_id, created_at);\",\n      \"targetQuery\": null,\n      \"notes\": \"Covers the WHERE + ORDER BY pattern, reducing full table scan on orders\",\n      \"expectedImpact\": \"high\"\n    },\n    {\n      \"proposalId\": \"orders_status_idx\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_orders_status ON orders(status);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_orders_status;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_orders_status ON orders(status);\",\n      \"targetQuery\": null,\n      \"notes\": \"Improves performance for filtering completed orders, reducing correlation with avg_order_value_cents subquery\"\n    },\n    {\n      \"proposalId\": \"orders_created_at_idx\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_orders_created_at ON orders(created_at);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_orders_created_at;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_orders_created_at ON orders(created_at);\",\n      \"targetQuery\": null,\n      \"notes\": \"Reduces full table scan for filtering orders within the last 90 days\"\n    },\n    {\n      \"proposalId\": \"orders_status_and_created_at_idx\",\n      \"strategyType\": \"index\",\n      \"applySQL\": \"CREATE INDEX idx_orders_status_and_created_at ON orders(status, created_at);\",\n      \"rollbackSQL\": \"DROP INDEX IF EXISTS idx_orders_status_and_created_at;\",\n      \"deploySQL\": \"CREATE INDEX CONCURRENTLY idx_orders_status_and_created_at ON orders(status, created_at);\",\n      \"targetQuery\": null,\n      \"notes\": \"Combines the benefits of filtering on status and date, further reducing subquery's impact\"\n    }\n  ]\n}",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

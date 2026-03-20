@@ -1,0 +1,273 @@
+=== Room Dev Harness ===
+Plugin:  /Users/dtannen/Code/commands-com-agent-rooms/room-plugins/postgres-query-optimizer
+Mode:    live (ollama llama3.2)
+Record:  fixtures/pg-demo-1
+
+Config:  /Users/dtannen/Code/commands-com-agent-rooms/scripts/dev-config-pg-demo.json
+Room:    Postgres Query Optimizer
+Roles:   explorer, builder, auditor
+Agents:  explorer_1 (explorer), builder_1 (builder), auditor_1 (auditor)
+
+--- init ---
+  [metric] currentPhase: {"active":"preflight","reached":["preflight"]}
+  [metric] candidateSummary: {"proposed":0,"promoted":0,"benchmarked":0,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":0,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[]}
+  [metric] solutions: null
+  [metric] dataQuality: {"tier":null,"tierLabel":"unknown","warnings":[]}
+--- onRoomStart ---
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+[1.8s] Loading schema (demo)...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+[1.8s] Loading schema (demo)...
+[1.8s] Schema loaded: Demo schema loaded
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+[1.8s] Loading schema (demo)...
+[1.8s] Schema loaded: Demo schema loaded
+[1.8s] Loading data (scale: 100,000)...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+[1.8s] Loading schema (demo)...
+[1.8s] Schema loaded: Demo schema loaded
+[1.8s] Loading data (scale: 100,000)...
+[7.3s] Data loaded: Demo data loaded (gzipped)
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+[1.8s] Loading schema (demo)...
+[1.8s] Schema loaded: Demo schema loaded
+[1.8s] Loading data (scale: 100,000)...
+[7.3s] Data loaded: Demo data loaded (gzipped)
+[7.3s] Creating baseline snapshot...
+  [metric] preflightStatus: [0.0s] Checking compatibility...
+[0.5s] Cleaning up prior harness (if any)...
+[0.9s] Checking Docker availability...
+[1.0s] Loading demo assets...
+[1.0s] Starting Postgres 16 container...
+[1.1s] Waiting for Postgres to be ready...
+[1.8s] Loading schema (demo)...
+[1.8s] Schema loaded: Demo schema loaded
+[1.8s] Loading data (scale: 100,000)...
+[7.3s] Data loaded: Demo data loaded (gzipped)
+[7.3s] Creating baseline snapshot...
+[7.5s] Harness ready
+  [metric] currentPhase: {"active":"baseline","reached":["preflight","baseline"]}
+  [metric] candidateSummary: {"proposed":0,"promoted":0,"benchmarked":0,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":0,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[]}
+  [metric] solutions: null
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    builder_1: 2415 chars
+
+--- Fan-out 0 (baseline) -> 1 target(s) ---
+  -> builder_1: sending 2415 chars to Ollama (llama3.2)...
+  <- builder_1: 5941 chars in 20.7s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"analysis","reached":["preflight","baseline","analysis"]}
+  [metric] candidateSummary: {"proposed":10,"promoted":10,"benchmarked":0,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":1,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":0,"strategyType":"index","proposalId":"","medianMs":"","speedupPct":"","status":"proposed","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":""},{"c
+  [metric] solutions: null
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    explorer_1: 2779 chars
+
+--- Fan-out 1 (planning) -> 1 target(s) ---
+  -> explorer_1: sending 2779 chars to Ollama (llama3.2)...
+  <- explorer_1: 2234 chars in 7.1s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"codegen","reached":["preflight","baseline","analysis","codegen"]}
+  [metric] candidateSummary: {"proposed":14,"promoted":12,"benchmarked":0,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":1,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":0,"strategyType":"index","proposalId":"","medianMs":"","speedupPct":"","status":"proposed","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":""},{"c
+  [metric] solutions: null
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    builder_1: 3512 chars
+
+--- Fan-out 2 (cycle) -> 1 target(s) ---
+  -> builder_1: sending 3512 chars to Ollama (llama3.2)...
+  <- builder_1: 2270 chars in 8.7s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"static_audit","reached":["preflight","baseline","analysis","codegen","static_audit"]}
+  [metric] candidateSummary: {"proposed":15,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":1,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    auditor_1: 3118 chars
+
+--- Fan-out 3 (audit) -> 1 target(s) ---
+  -> auditor_1: sending 3118 chars to Ollama (llama3.2)...
+  <- auditor_1: 565 chars in 2.4s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"frontier_refine","reached":["preflight","baseline","analysis","codegen","static_audit","frontier_refine"]}
+  [metric] candidateSummary: {"proposed":15,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":1,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    builder_1: 2044 chars
+
+--- Fan-out 4 (retest) -> 1 target(s) ---
+  -> builder_1: sending 2044 chars to Ollama (llama3.2)...
+  <- builder_1: 1269 chars in 5.0s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"analysis","reached":["preflight","baseline","analysis","codegen","static_audit","frontier_refine"]}
+  [metric] candidateSummary: {"proposed":15,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":2,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    explorer_1: 2961 chars
+
+--- Fan-out 5 (planning) -> 1 target(s) ---
+  -> explorer_1: sending 2961 chars to Ollama (llama3.2)...
+  <- explorer_1: 2050 chars in 6.3s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"codegen","reached":["preflight","baseline","analysis","codegen","static_audit","frontier_refine"]}
+  [metric] candidateSummary: {"proposed":16,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":2,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    builder_1: 3622 chars
+
+--- Fan-out 6 (cycle) -> 1 target(s) ---
+  -> builder_1: sending 3622 chars to Ollama (llama3.2)...
+  <- builder_1: 6435 chars in 19.9s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"static_audit","reached":["preflight","baseline","analysis","codegen","static_audit","frontier_refine"]}
+  [metric] candidateSummary: {"proposed":16,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":2,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    auditor_1: 3019 chars
+
+--- Fan-out 7 (schema_repair) -> 1 target(s) ---
+  -> auditor_1: sending 3019 chars to Ollama (llama3.2)...
+  <- auditor_1: 253 chars in 1.3s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"frontier_refine","reached":["preflight","baseline","analysis","codegen","static_audit","frontier_refine"]}
+  [metric] candidateSummary: {"proposed":16,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":2,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: fan_out -> 1 target(s)
+    builder_1: 2044 chars
+
+--- Fan-out 8 (retest) -> 1 target(s) ---
+  -> builder_1: sending 2044 chars to Ollama (llama3.2)...
+  <- builder_1: 8806 chars in 28.9s
+  Saved fixture to fixtures/pg-demo-1/
+  [metric] currentPhase: {"active":"complete","reached":["preflight","baseline","analysis","codegen","static_audit","frontier_refine","complete"]}
+  [metric] candidateSummary: {"proposed":16,"promoted":13,"benchmarked":1,"frontier":0,"rejected":0}
+  [metric] cycleProgress: {"value":2,"max":4}
+  [metric] bestImprovementPct: {"value":0,"max":100}
+  [metric] baselineMs: null
+  [metric] baselines: {"rows":[]}
+  [metric] frontier: {"rows":[]}
+  [metric] candidates: {"rows":[{"cycle":1,"strategyType":"index","proposalId":"","medianMs":45.3,"speedupPct":43.1,"status":"benchmarked","riskScore":5,"auditFindings":0,"telemetryBacked":false,"owner":"Builder 1","notes":
+  [metric] solutions: {"title":"Solutions","blocks":[{"title":"candidate-11 — index","subtitle":"cycle 1 · benchmarked","language":"sql","content":"-- candidate-11\n-- Deploy with:\nCREATE INDEX idx_orders_user_created ON 
+  [metric] dataQuality: {"tier":0,"tierLabel":"demo","warnings":[]}
+  Decision: stop (plateau)
+
+--- shutdown ---
+  Clean shutdown
+
+=== Complete ===
+Stop reason:  plateau
+Rounds:       9
+Final phase:  complete
+Duration:     108.2s

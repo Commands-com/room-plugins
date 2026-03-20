@@ -133,8 +133,10 @@ In Desktop: **Settings > Developer > Dev Mode + Trust All Plugins**.
 ```
 room-plugins/template-room                  Classic reference implementation (copy to create new)
 room-plugins/fft-autotune                   Advanced empirical search room (classic)
-room-plugins/redshift-query-optimizer       Declarative room reference (room.yaml + engine/harness)
-room-plugins/sql-optimizer-core             Shared library used by SQL optimizer plugins
+room-plugins/postgres-query-optimizer       Declarative room (Docker harness, index + rewrite strategies)
+room-plugins/redshift-query-optimizer       Declarative room (live cluster, rewrite + advisory strategies)
+room-plugins/sql-optimizer-core             Shared library for SQL optimizer plugins
+scripts/dev-runner.js                       Dev harness — run plugins locally with Ollama or fixtures
 scripts/install-room-plugins.sh             Bash installer (macOS/Linux)
 scripts/install-room-plugins.mjs            Node.js installer (cross-platform)
 scripts/generate-room-allowlist.mjs         Generate allowlist with SHA-256 pins

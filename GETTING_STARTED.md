@@ -78,7 +78,68 @@ For faster iteration on one room, install just that plugin:
 ./scripts/install-room-plugins.sh --plugin my-room
 ```
 
-## 5. Validate In-App Behavior
+## 5. Test Locally with the Dev Harness
+
+Before installing to Commands Desktop, you can run your plugin end-to-end locally using the dev harness. It drives the full plugin lifecycle (init → onRoomStart → fan-out loop → shutdown) with agent responses provided by Ollama or recorded fixtures.
+
+**Prerequisites:** [Ollama](https://ollama.com) running locally with a model pulled (e.g., `ollama pull llama3.2`).
+
+### Live mode — Ollama answers for every agent
+
+```bash
+node scripts/dev-runner.js room-plugins/my-room --config my-config.json
+```
+
+Where `my-config.json` contains your room and orchestrator config:
+
+```json
+{
+  "objective": "Describe what the room should do",
+  "roomConfig": { "demoMode": true },
+  "orchestratorConfig": {}
+}
+```
+
+### Record a run as fixtures
+
+```bash
+node scripts/dev-runner.js room-plugins/my-room \
+  --config my-config.json --record fixtures/my-run-1
+```
+
+This saves each fan-out round's responses as numbered JSON files:
+
+```
+fixtures/my-run-1/
+  000-baseline.json
+  001-planning.json
+  002-cycle.json
+  ...
+  transcript.txt
+```
+
+### Replay recorded fixtures (no Ollama, deterministic)
+
+```bash
+node scripts/dev-runner.js room-plugins/my-room \
+  --config my-config.json --replay fixtures/my-run-1
+```
+
+Replays the recorded agent responses through the same plugin lifecycle. Useful for testing state machine changes without waiting for LLM responses.
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--live` | (default) | Use Ollama for agent responses |
+| `--replay <dir>` | | Replay recorded fixtures |
+| `--record <dir>` | | Record live responses as fixtures |
+| `--model <name>` | `llama3.2` | Ollama model name |
+| `--ollama-url <url>` | `http://localhost:11434` | Ollama API base URL |
+| `--config <file>` | | JSON config (roomConfig, orchestratorConfig, objective) |
+| `--max-rounds <n>` | `50` | Safety limit on fan-out rounds |
+
+## 6. Validate In-App Behavior
 
 Test these cases before sharing your plugin:
 
@@ -90,7 +151,7 @@ Test these cases before sharing your plugin:
 6. Manual/semi-auto approval path -> pending decisions are still valid after edit and approval.
 7. Dashboard path -> every dashboard panel key has matching `ctx.emitMetrics({ [panelKey]: ... })` data and renders correctly.
 
-## 6. Publish Safely
+## 7. Publish Safely
 
 When you change plugin code, regenerate allowlist hashes before publishing:
 
@@ -103,7 +164,7 @@ node ./scripts/generate-room-allowlist.mjs \
 
 This keeps plugin integrity checks accurate.
 
-## 7. Use the Full Contract While Building
+## 8. Use the Full Contract While Building
 
 Read [`docs/CONTRACT.md`](./docs/CONTRACT.md) for:
 

@@ -1,0 +1,10 @@
+{
+  "objective": "Find index and rewrite optimizations for the demo slow query",
+  "roomConfig": {
+    "demoMode": true
+  },
+  "orchestratorConfig": {
+    "plannedCandidatesPerCycle": 2,
+    "promoteTopK": 2
+  }
+}

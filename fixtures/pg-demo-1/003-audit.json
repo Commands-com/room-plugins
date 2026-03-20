@@ -1,0 +1,13 @@
+{
+  "label": "audit",
+  "responses": [
+    {
+      "agentId": "auditor_1",
+      "response": "{\n  \"summary\": \"Audit of 1 candidates\",\n  \"audits\": [\n    {\n      \"proposalId\": \"...\",\n      \"riskScore\": 3,\n      \"findings\": [\n        {\n          \"severity\": \"low\",\n          \"category\": \"storage_overhead\",\n          \"confidence\": \"verified\",\n          \"detail\": \"The index size is approximately 100MB, which is less than 50% of the table size.\",\n          \"recommendation\": \"\"\n        }\n      ],\n      \"telemetryAvailable\": false,\n      \"approved\": true,\n      \"deployNotes\": \"Safe to apply with CREATE INDEX CONCURRENTLY during low-traffic window.\"\n    }\n  ]\n}",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

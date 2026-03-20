@@ -1,0 +1,13 @@
+{
+  "label": "schema_repair",
+  "responses": [
+    {
+      "agentId": "auditor_1",
+      "response": "I'll review the optimization candidates and provide my audit findings in the required format.\n\nPlease go ahead and provide the first candidate. I'll respond with a JSON object containing the proposal ID, risk score, findings, and other relevant details.",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}
