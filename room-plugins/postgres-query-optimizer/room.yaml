@@ -381,6 +381,97 @@ dashboard:
         - { key: notes, label: Notes, width: 300 }
       sortable: true
 
+cli:
+  command: postgres-query-optimize
+  description: Optimize PostgreSQL queries with empirical benchmarking
+  positionalArgs:
+    - name: connection-string
+      type: string
+      required: false
+      description: PostgreSQL connection string (or use demo mode)
+      mapTo: roomConfig.dbUrl
+    - name: query
+      type: string
+      required: false
+      description: SQL query to optimize (or use --queries-file)
+      mapTo: roomConfig.slowQuery
+  startParams:
+    - name: schema-source
+      type: enum
+      required: false
+      default: introspect
+      choices: [introspect, dump, migrations]
+      description: How to load the database schema
+      mapTo: roomConfig.schemaSource
+    - name: schema-path
+      type: string
+      required: false
+      description: Path to pg_dump schema or migrations directory
+      mapTo: roomConfig.schemaPath
+    - name: seed-data-path
+      type: string
+      required: false
+      description: SQL script or pg_dump data-only file to populate the harness
+      mapTo: roomConfig.seedDataPath
+    - name: schema-filter
+      type: string_array
+      required: false
+      description: Tables to include (comma-separated or repeatable)
+      mapTo: roomConfig.schemaFilter
+    - name: postgres-version
+      type: enum
+      required: false
+      default: "16"
+      choices: ["14", "15", "16", "17"]
+      description: PostgreSQL version for the Docker harness
+      mapTo: roomConfig.postgresVersion
+    - name: container-memory
+      type: enum
+      required: false
+      default: 1g
+      choices: [512m, 1g, 2g, 4g]
+      description: Memory limit for the Docker harness container
+      mapTo: roomConfig.containerMemory
+    - name: scale-factor
+      type: string
+      required: false
+      default: "100000"
+      description: Target row count for data generation (1000-1000000)
+      mapTo: roomConfig.scaleFactor
+    - name: output-dir
+      type: directory
+      required: false
+      description: Output directory for optimization artifacts
+      mapTo: roomConfig.outputDir
+  statusFields:
+    - key: candidateSummary
+      label: Strategies
+      format: counter-group
+    - key: bestImprovementPct
+      label: Best Speedup
+      format: progress
+    - key: currentPhase
+      label: Phase
+      format: text
+      extract: active
+  computedStatusFields:
+    - name: totalStrategies
+      label: Total Strategies
+      format: number
+      derive: "(metrics.candidateSummary.proposed || 0) + (metrics.candidateSummary.promoted || 0)"
+  exitCodes:
+    cycle_limit: 2
+    turn_limit: 2
+  statusTemplate: "[{{command}}] {{roomId}}: {{state}} (cycle {{cycle}}/{{maxCycles}}, {{bestImprovementPct}} speedup){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}"
+  listTemplate: "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}  {{bestImprovementPct}} speedup{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+  skill:
+    name: postgres-query-optimize
+    description: Optimize slow SQL queries using multi-agent benchmarking
+    defaultObjective: Analyze and optimize the provided queries for maximum performance
+    contextGathering:
+      requiredInputs: [connection-string]
+      optionalInputs: [query]
+
 report:
   summaryMetrics: [bestImprovementPct, candidateSummary]
   table:
