@@ -1,4 +1,4 @@
-import { exec as execCb } from 'node:child_process';
+import { exec as execCb, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import fs from 'node:fs';
@@ -648,8 +648,43 @@ export async function loadData(containerNameStr, config, { onProgress } = {}) {
 
       let sampledCount = 0;
       const failedTables = [];
-      // maxBuffer for COPY exports — individual table export can be 50-100MB
-      const copyMaxBuffer = 500 * 1024 * 1024;
+
+      // Stream a COPY TO STDOUT command directly to the temp file, avoiding
+      // buffering the entire result in Node.js memory (which fails for large tables).
+      async function streamCopyToFile(psqlCmd, copyCmd, quoted, ws) {
+        return new Promise((resolve, reject) => {
+          const args = psqlCmd.split(/\s+/).slice(1); // drop 'psql' — use spawn args
+          const bin = psqlCmd.split(/\s+/)[0];
+          // Use exec-based approach with spawn for streaming
+          const child = spawn('sh', ['-c', `${psqlCmd} -c "${copyCmd}"`], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let rowCount = 0;
+          let hasData = false;
+          const timeout = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('timeout')); }, 600000);
+
+          child.stdout.on('data', (chunk) => {
+            if (!hasData) {
+              ws.write(`COPY ${quoted} FROM STDIN;\n`);
+              hasData = true;
+            }
+            // Count newlines for row count
+            for (let i = 0; i < chunk.length; i++) {
+              if (chunk[i] === 10) rowCount++;
+            }
+            ws.write(chunk);
+          });
+
+          child.on('close', (code) => {
+            clearTimeout(timeout);
+            if (hasData) ws.write('\\.\n');
+            resolve({ rowCount, hasData });
+          });
+
+          child.on('error', (err) => {
+            clearTimeout(timeout);
+            reject(err);
+          });
+        });
+      }
 
       progress(`Sampling ${filteredTables.length} table(s)...`);
       for (let ti = 0; ti < filteredTables.length; ti++) {
@@ -667,29 +702,18 @@ export async function loadData(containerNameStr, config, { onProgress } = {}) {
             copyCmd = `COPY (SELECT * FROM ${quoted} TABLESAMPLE SYSTEM(${samplePct.toFixed(4)}) LIMIT ${scaleFactor}) TO STDOUT`;
           }
 
-          const { stdout: copyData } = await execAsync(
-            `${dockerPsql} -c "${copyCmd}"`,
-            { encoding: 'utf-8', timeout: 120000, maxBuffer: copyMaxBuffer },
-          );
+          let result = await streamCopyToFile(dockerPsql, copyCmd, quoted, writeStream);
 
           // Retry: if TABLESAMPLE returned zero rows, fall back to plain LIMIT
-          let finalData = copyData;
-          if (!finalData.trim() && table.estimatedRows > scaleFactor) {
+          if (!result.hasData && table.estimatedRows > scaleFactor) {
             progress(`[${ti + 1}/${filteredTables.length}] Retrying ${shortName} (TABLESAMPLE returned 0 rows)...`);
-            const { stdout: retryOut } = await execAsync(
-              `${dockerPsql} -c "COPY (SELECT * FROM ${quoted} LIMIT ${scaleFactor}) TO STDOUT"`,
-              { encoding: 'utf-8', timeout: 120000, maxBuffer: copyMaxBuffer },
-            );
-            finalData = retryOut;
+            const retryCopyCmd = `COPY (SELECT * FROM ${quoted} LIMIT ${scaleFactor}) TO STDOUT`;
+            result = await streamCopyToFile(dockerPsql, retryCopyCmd, quoted, writeStream);
           }
 
-          if (finalData.trim()) {
-            const rowCount = finalData.trimEnd().split('\n').length;
-            writeStream.write(`COPY ${quoted} FROM STDIN;\n`);
-            writeStream.write(finalData.trimEnd());
-            writeStream.write('\n\\.\n');
+          if (result.hasData) {
             sampledCount++;
-            progress(`[${ti + 1}/${filteredTables.length}] ${shortName}: ${rowCount.toLocaleString()} rows exported`);
+            progress(`[${ti + 1}/${filteredTables.length}] ${shortName}: ${result.rowCount.toLocaleString()} rows exported`);
           } else {
             progress(`[${ti + 1}/${filteredTables.length}] ${shortName}: empty (skipped)`);
           }
@@ -907,7 +931,38 @@ async function loadSyntheticData(containerNameStr, config) {
   }
 
   // Topologically sort tables so parents are populated before children
-  const tableOrder = topologicalSortTables([...tableColumns.keys()], fkRelations);
+  let tableOrder = topologicalSortTables([...tableColumns.keys()], fkRelations);
+
+  // Filter to only tables referenced by the query (+ FK parents) to avoid
+  // wasting time generating data for unrelated tables.
+  const slowQuery = config.demoMode ? (config.demoQuery || config.slowQuery) : config.slowQuery;
+  if (slowQuery) {
+    const queryRefs = extractQueryTableRefs(slowQuery);
+    if (queryRefs.length > 0) {
+      // Match against table names (with or without schema prefix)
+      const needed = new Set();
+      for (const ref of queryRefs) {
+        for (const t of tableOrder) {
+          const bare = t.includes('.') ? t.split('.').pop() : t;
+          if (bare === ref || t === ref) needed.add(t);
+        }
+      }
+      // Add FK parent tables transitively so FK-consistent generation works
+      let added = true;
+      while (added) {
+        added = false;
+        for (const fk of fkRelations) {
+          if (needed.has(fk.childTable) && !needed.has(fk.parentTable) && tableColumns.has(fk.parentTable)) {
+            needed.add(fk.parentTable);
+            added = true;
+          }
+        }
+      }
+      if (needed.size > 0) {
+        tableOrder = tableOrder.filter((t) => needed.has(t));
+      }
+    }
+  }
 
   // Build synthetic INSERT statements.
   // Skip columns with serial/sequence defaults (auto-generated PKs).

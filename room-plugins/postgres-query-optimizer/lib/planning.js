@@ -147,7 +147,7 @@ export function buildDiscoveryTargets(ctx, state, config) {
     ? `Current baseline: ${state.baselines.medianMs.toFixed(1)}ms median, plan: ${(state.baselines.leafAccessNodes || []).join(', ') || 'unknown'}`
     : 'No baseline established yet.';
 
-  const connectionString = state.harnessState?.connectionString || '';
+  const connectionString = state.harnessState?.connectionString || 'postgres://harness:harness@localhost:5432/harness';
 
   // Cycle feedback for cycle 2+
   const cycleContext = [];

@@ -249,10 +249,10 @@ export function createPlugin() {
         }
         emitProgress(`Schema loaded: ${schemaResult.message}`);
 
-        const FULL_PULL_THRESHOLD = 10_000_000;
         let dataResult = null;
         let snapshotPath = null;
 
+        const FULL_PULL_THRESHOLD = 10_000_000;
         if (config.seedFromSource && config.dbUrl) {
           config.scaleFactor = FULL_PULL_THRESHOLD;
           emitProgress(`Loading full data from source (up to ${FULL_PULL_THRESHOLD.toLocaleString()} rows per table)...`);

@@ -189,7 +189,7 @@ configSchema:
   warmupRuns: { type: integer, min: 1, max: 20, default: 3 }
   benchmarkTrials: { type: integer, min: 3, max: 50, default: 10 }
   plateauCycles: { type: integer, min: 1, max: 5, default: 2 }
-  scaleFactor: { type: integer, min: 1000, max: 2000000, default: 100000 }
+  scaleFactor: { type: integer, min: 1000, max: 2000000, default: 200000 }
 
 setup:
   compatibilityGate:
@@ -325,6 +325,10 @@ dashboard:
         static_audit: Static Audit
         frontier_refine: Refine
         complete: Complete
+    - type: code-blocks
+      key: targetQuery
+      label: Target Query
+      language: sql
     - type: table
       key: baselines
       label: Baseline
@@ -413,6 +417,12 @@ cli:
       required: false
       description: SQL script or pg_dump data-only file to populate the harness
       mapTo: roomConfig.seedDataPath
+    - name: seed-from-source
+      type: boolean
+      required: false
+      default: true
+      description: Sample real rows from source database (Tier 2) instead of synthetic data
+      mapTo: roomConfig.seedFromSource
     - name: schema-filter
       type: string_array
       required: false
@@ -435,7 +445,7 @@ cli:
     - name: scale-factor
       type: string
       required: false
-      default: "100000"
+      default: "200000"
       description: Target row count for data generation (1000-1000000)
       mapTo: roomConfig.scaleFactor
     - name: output-dir

@@ -184,8 +184,9 @@ function buildEngineBaselineRows(state) {
 // Postgres-specific extra metrics (winner code blocks, data quality)
 // ---------------------------------------------------------------------------
 
-function buildEngineMetrics(state, _config) {
+function buildEngineMetrics(state, config) {
   const dataTierLabels = { 0: 'demo', 1: 'seed (Tier 1)', 2: 'sampled (Tier 2)', 3: 'synthetic (Tier 3)' };
+  const slowQuery = config?.demoMode ? (state.demoQuery || config?.slowQuery) : config?.slowQuery;
   const metrics = {
     dataQuality: {
       tier: state.dataTier != null ? state.dataTier : null,
@@ -193,6 +194,14 @@ function buildEngineMetrics(state, _config) {
       warnings: Array.isArray(state.dataWarnings) ? [...state.dataWarnings] : [],
     },
   };
+
+  // Target query display
+  if (slowQuery) {
+    metrics.targetQuery = {
+      title: 'Target Query',
+      blocks: [{ title: 'SQL', language: 'sql', content: slowQuery }],
+    };
+  }
 
   // Winner queries (rewrite)
   const rewriteWinnerId = state.bestByStrategyType?.rewrite;

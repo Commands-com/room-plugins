@@ -11,7 +11,7 @@ export const DEFAULTS = Object.freeze({
   warmupRuns: 3,
   benchmarkTrials: 10,
   plateauCycles: 2,
-  scaleFactor: 100000,
+  scaleFactor: 200000,
   postgresVersion: '16',
   schemaSource: 'introspect',
   outputDir: '.commands/postgres-tuner',
