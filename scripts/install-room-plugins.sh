@@ -7,7 +7,7 @@ Usage: ./scripts/install-room-plugins.sh [options]
 
 Options:
   --source <dir>          Source plugin directory (default: ./room-plugins)
-  --dest <dir>            Destination plugin directory (default: ~/.commands-agent/room-plugins)
+  --dest <dir>            Destination plugin directory (default: ~/.commands-com/workspace/room-plugins)
   --allowlist <file>      Allowlist output file (derived from --dest parent by default)
   --plugin <name>         Install only a specific plugin (repeatable)
   --skip-allowlist        Do not write allowlist file
@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SOURCE_DIR="${REPO_ROOT}/room-plugins"
-DEST_DIR="${HOME}/.commands-agent/room-plugins"
+DEST_DIR="${HOME}/.commands-com/workspace/room-plugins"
 ALLOWLIST_PATH=""
 ALLOWLIST_EXPLICIT=0
 WRITE_ALLOWLIST=1

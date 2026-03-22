@@ -69,8 +69,8 @@ node scripts/install-room-plugins.mjs --plugin fft-autotune
 
 | Platform | Default install locations |
 |---|---|
-| macOS / Linux | `~/.commands-agent/room-plugins` |
-| Windows | `%LOCALAPPDATA%\commands-agent\room-plugins` |
+| macOS / Linux | `~/.commands-com/workspace/room-plugins` |
+| Windows | `%LOCALAPPDATA%\commands-com\workspace\room-plugins` |
 
 Restart Commands Desktop.
 

@@ -18,9 +18,9 @@ const __dirname = path.dirname(__filename);
 function getDefaultBaseDir() {
   if (process.platform === 'win32') {
     const base = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
-    return path.join(base, 'commands-agent');
+    return path.join(base, 'commands-com', 'workspace');
   }
-  return path.join(os.homedir(), '.commands-agent');
+  return path.join(os.homedir(), '.commands-com', 'workspace');
 }
 
 function usage() {

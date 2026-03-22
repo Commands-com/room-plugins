@@ -158,8 +158,8 @@ When you change plugin code, regenerate allowlist hashes before publishing:
 ```bash
 node ./scripts/generate-room-allowlist.mjs \
   --managed-only \
-  ~/.commands-agent/room-plugins \
-  ~/.commands-agent/room-plugins-allowed.json
+  ~/.commands-com/workspace/room-plugins \
+  ~/.commands-com/workspace/room-plugins-allowed.json
 ```
 
 This keeps plugin integrity checks accurate.

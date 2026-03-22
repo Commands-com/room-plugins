@@ -10,10 +10,10 @@ If you follow this file, you can build a room plugin from this repo without acce
 - External room types are additive (they do not replace built-ins).
 - Each room run gets a fresh plugin instance via `createPlugin()`.
 - External plugins are loaded from:
-  - `~/.commands-agent/room-plugins`
+  - `~/.commands-com/workspace/room-plugins`
   - override: `COMMANDS_AGENT_ROOM_PLUGINS_DIR`
 - Allowlist file is loaded from the plugin directory parent:
-  - default: `~/.commands-agent/room-plugins-allowed.json`
+  - default: `~/.commands-com/workspace/room-plugins-allowed.json`
 
 No changes to `Commands.app` are required.
 
