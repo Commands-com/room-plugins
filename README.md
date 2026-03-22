@@ -152,6 +152,7 @@ GETTING_STARTED.md                          End-to-end workflow from install to 
 ## Additional Docs
 
 - [Getting Started](./GETTING_STARTED.md)
+- [Contributing](./CONTRIBUTING.md)
 - [Room Plugin Contract](./docs/CONTRACT.md)
 - [Declarative Rooms Guide](./docs/DECLARATIVE_ROOMS.md)
 - [Dashboard Guide](./docs/DASHBOARD_GUIDE.md)
