@@ -1,0 +1,152 @@
+{
+  "id": "code_arena",
+  "name": "Code Arena",
+  "version": "1.0.0",
+  "orchestratorType": "code_arena",
+  "description": "Head-to-head AI coding tournament — two contestants, one judge, multiple rounds",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["contestant", "judge"],
+    "optional": [],
+    "forbidden": ["implementer", "reviewer", "worker"],
+    "minCount": { "contestant": 2, "judge": 1 }
+  },
+  "limits": {
+    "maxCycles": { "default": 10, "min": 1, "max": 10 },
+    "maxTurns": { "default": 100, "min": 10, "max": 500 },
+    "maxDurationMs": { "default": 3600000, "max": 7200000 },
+    "maxFailures": { "default": 5 },
+    "agentTimeoutMs": { "default": 1800000 },
+    "pluginHookTimeoutMs": { "default": 120000 },
+    "llmTimeoutMs": { "default": 120000, "max": 300000 },
+    "turnFloorRole": "contestant",
+    "turnFloorFormula": "2 + N"
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "tournamentPhase",
+        "label": "Tournament",
+        "phases": ["challenge", "coding", "judging", "result", "complete"],
+        "phaseLabels": {
+          "challenge": "Challenge",
+          "coding": "Coding",
+          "judging": "Judging",
+          "result": "Result",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "text",
+        "key": "roundHeader",
+        "label": "Current Round"
+      },
+      {
+        "type": "counter-group",
+        "key": "scoreboard",
+        "label": "Scoreboard",
+        "layout": "row",
+        "counters": [
+          { "key": "contestant1Wins", "label": "Contestant 1", "color": "blue" },
+          { "key": "contestant2Wins", "label": "Contestant 2", "color": "orange" },
+          { "key": "draws", "label": "Draws", "color": "gray" }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "roundProgress",
+        "label": "Round Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "table",
+        "key": "roundResults",
+        "label": "Round History",
+        "sortable": true,
+        "fullWidth": true,
+        "columns": [
+          { "key": "round", "label": "Round", "width": 60 },
+          { "key": "challenge", "label": "Challenge", "width": 180 },
+          { "key": "difficulty", "label": "Difficulty", "width": 90 },
+          { "key": "winner", "label": "Winner", "width": 140 },
+          { "key": "score", "label": "Score", "width": 80 },
+          { "key": "verdict", "label": "Verdict", "width": 300 }
+        ]
+      },
+      {
+        "type": "code-blocks",
+        "key": "challengeDescription",
+        "label": "Challenges",
+        "language": "markdown",
+        "fullWidth": true
+      },
+      {
+        "type": "conversation-feed",
+        "key": "judgeFeed",
+        "label": "Judge Commentary"
+      },
+      {
+        "type": "code-blocks",
+        "key": "currentSolutions",
+        "label": "Solutions",
+        "language": "javascript"
+      }
+    ]
+  },
+  "display": {
+    "typeLabel": "Code Arena",
+    "typeTag": "ARENA",
+    "cycleNoun": "Round",
+    "reportTitle": "Code Arena — Tournament Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Judge inventing challenge",
+      "fanOut": "Contestants coding...",
+      "singleTurn": "Judge evaluating",
+      "synthesis": "Announcing results",
+      "planning": "Preparing next round"
+    },
+    "defaultRoster": [
+      { "role": "contestant", "displayName": "Contestant 1" },
+      { "role": "contestant", "displayName": "Contestant 2" },
+      { "role": "judge", "displayName": "Judge" }
+    ],
+    "defaultAddRole": "contestant"
+  },
+  "objective": {
+    "required": false,
+    "placeholder": "Optional: specify a theme, language preference, or difficulty level"
+  },
+  "report": {
+    "summaryMetrics": ["scoreboard"],
+    "table": {
+      "metricKey": "roundResults",
+      "columns": [
+        { "key": "round", "label": "Round", "width": 60 },
+        { "key": "challenge", "label": "Challenge", "width": 180 },
+        { "key": "difficulty", "label": "Difficulty", "width": 90 },
+        { "key": "winner", "label": "Winner", "width": 140 },
+        { "key": "score", "label": "Score", "width": 80 },
+        { "key": "verdict", "label": "Verdict", "width": 300 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "challengeDescription", "label": "Challenges", "language": "markdown" },
+      { "metricKey": "allSolutions", "label": "All Solutions", "language": "javascript" }
+    ]
+  },
+  "roomConfigSchema": {
+    "rounds": {
+      "type": "enum",
+      "label": "Number of Rounds",
+      "options": ["1", "3", "5", "7", "10"],
+      "default": "3",
+      "description": "Best-of-N rounds. Winner is the contestant with the most round wins."
+    }
+  }
+}
