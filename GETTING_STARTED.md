@@ -114,9 +114,15 @@ fixtures/my-run-1/
   000-baseline.json
   001-planning.json
   002-cycle.json
+  llm-000-synthesis.json
+  llm-001-synthesis.json
   ...
   transcript.txt
 ```
+
+If your plugin calls `ctx.invokeLLM(...)`, the harness also records those
+results as `llm-000-*.json`, `llm-001-*.json`, and so on, so replay mode can
+exercise synthesis-heavy rooms without Ollama.
 
 ### Replay recorded fixtures (no Ollama, deterministic)
 

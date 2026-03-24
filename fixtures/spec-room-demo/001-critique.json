@@ -1,0 +1,29 @@
+{
+  "label": "critique",
+  "responses": [
+    {
+      "agentId": "planner_1",
+      "response": "## Keep\n- The two-pass structure.\n- The emphasis on explicit open questions.\n\n## Change\n- Tighten the summary so it reads like a real handoff artifact.\n\n## Missing\n- A clear note that this is a first-pass spec, not the final word.\n\n## Risks\n- The room may overfit to product specs and feel weak for technical specs.\n\n## Acceptance Criteria Gaps\n- Mention that the final output should include a recommended next step.\n\n## Open Questions\n- Should we support more than one planner or implementer by default?",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    {
+      "agentId": "critic_1",
+      "response": "## Keep\n- Non-goals and scope realism.\n- Concrete acceptance criteria.\n\n## Change\n- Be sharper about fallback behavior when synthesis fails.\n\n## Missing\n- A note that uncertainty should never be hidden in polished prose.\n\n## Risks\n- The dashboard could be noisy if it shows too much history.\n\n## Acceptance Criteria Gaps\n- Add a requirement that the final spec can be reviewed asynchronously.\n\n## Open Questions\n- Should the room ever auto-stop early if the draft is already strong?",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    {
+      "agentId": "implementer_1",
+      "response": "## Keep\n- The role-based prompts.\n- The deterministic JSON synthesis target.\n\n## Change\n- Make the implementation plan a numbered sequence.\n\n## Missing\n- A mention of the native test coverage and dev-harness replay path.\n\n## Risks\n- Shared abstractions could be overbuilt too early.\n\n## Acceptance Criteria Gaps\n- Include a clear stop condition after the final synthesis pass.\n\n## Open Questions\n- Is there a reusable text-room core we should create after a second room exists?",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

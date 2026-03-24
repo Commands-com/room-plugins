@@ -23,6 +23,9 @@
  *   node scripts/dev-runner.js room-plugins/postgres-query-optimizer \
  *     --replay fixtures/pg-demo-1
  *
+ * Replay mode supports both fan-out fixtures (000-*.json, 001-*.json, ...)
+ * and invokeLLM fixtures (llm-000-*.json, llm-001-*.json, ...).
+ *
  * Config file (JSON):
  *   {
  *     "objective": "Optimize the slow query",
@@ -153,6 +156,8 @@ function createMockCtx(manifest, userConfig) {
   let state = null;
   let cycle = 0;
   let turnIndex = 0;
+  let llmCallIndex = 0;
+  let activeFanOut = null;
   const participants = buildParticipants(manifest.roles);
 
   // Flatten manifest limits: { maxCycles: { default: 4 } } → { maxCycles: 4 }
@@ -206,14 +211,83 @@ function createMockCtx(manifest, userConfig) {
       for (const p of participants) counts[p.role] = (counts[p.role] || 0) + 1;
       return counts;
     },
+    getActiveFanOut() {
+      return activeFanOut != null ? JSON.parse(JSON.stringify(activeFanOut)) : null;
+    },
     getRoles() { return [...new Set(participants.map((p) => p.role))]; },
-    async invokeLLM(prompt) {
+    async invokeLLM(prompt, options = {}) {
+      const currentCall = llmCallIndex++;
+      const label = options?.purpose || `llm-${currentCall}`;
+
+      if (flags.mode === 'replay') {
+        const fixture = loadLlmFixture(flags.replayDir, currentCall);
+        if (!fixture) {
+          return {
+            ok: false,
+            error: `No LLM fixture for call ${currentCall} in ${flags.replayDir}`,
+          };
+        }
+        log(`  [llm replay] ${fixture.label || label}`);
+        if (fixture.ok === false) {
+          return {
+            ok: false,
+            error: fixture.error || `llm_fixture_${currentCall}_failed`,
+          };
+        }
+        let data = fixture.data;
+        if (data === undefined && options?.responseFormat?.type === 'json_schema') {
+          try {
+            data = JSON.parse(fixture.text || '');
+          } catch (err) {
+            return {
+              ok: false,
+              error: { code: 'invalid_json', message: err.message },
+              text: fixture.text || '',
+              usage: fixture.usage || { input_tokens: 0, output_tokens: 0 },
+            };
+          }
+        }
+        return {
+          ok: true,
+          text: fixture.text || '',
+          data,
+          usage: fixture.usage || { input_tokens: 0, output_tokens: 0 },
+        };
+      }
+
       try {
         const text = await callOllama(typeof prompt === 'string' ? prompt : JSON.stringify(prompt));
-        return { ok: true, text, usage: { input_tokens: 0, output_tokens: 0 } };
+        const result = { ok: true, text, usage: { input_tokens: 0, output_tokens: 0 } };
+        if (options?.responseFormat?.type === 'json_schema') {
+          try {
+            result.data = JSON.parse(text);
+          } catch (err) {
+            return {
+              ok: false,
+              error: { code: 'invalid_json', message: err.message },
+              text,
+              usage: result.usage,
+            };
+          }
+        }
+        if (flags.recordDir) {
+          saveLlmFixture(flags.recordDir, currentCall, label, {
+            text,
+            data: result.data,
+            usage: result.usage,
+          });
+          log(`  Saved LLM fixture ${currentCall} to ${flags.recordDir}/`);
+        }
+        return result;
       } catch (err) {
-        return { ok: false, error: err.message };
+        return { ok: false, error: { code: 'llm_error', message: err.message } };
       }
+    },
+    _setActiveFanOut(snapshot) {
+      activeFanOut = snapshot != null ? JSON.parse(JSON.stringify(snapshot)) : null;
+    },
+    _clearActiveFanOut() {
+      activeFanOut = null;
     },
   };
 }
@@ -262,6 +336,25 @@ function saveFixture(dir, roundIndex, label, responses) {
   writeFileSync(
     join(dir, `${padded}-${safeName}.json`),
     JSON.stringify({ label, responses }, null, 2),
+  );
+}
+
+function loadLlmFixture(dir, llmIndex) {
+  const padded = String(llmIndex).padStart(3, '0');
+  const files = readdirSync(dir)
+    .filter((f) => f.startsWith(`llm-${padded}`) && f.endsWith('.json'))
+    .sort();
+  if (files.length === 0) return null;
+  return JSON.parse(readFileSync(join(dir, files[0]), 'utf8'));
+}
+
+function saveLlmFixture(dir, llmIndex, label, result) {
+  mkdirSync(dir, { recursive: true });
+  const padded = String(llmIndex).padStart(3, '0');
+  const safeName = label.replace(/[^a-z0-9_-]/gi, '_');
+  writeFileSync(
+    join(dir, `llm-${padded}-${safeName}.json`),
+    JSON.stringify({ label, ...result }, null, 2),
   );
 }
 
@@ -320,6 +413,28 @@ async function resolveTargets(targets, roundIndex, label, participants) {
   return responses;
 }
 
+function buildActiveFanOutSnapshot(targets, participants, metadata = {}) {
+  const expanded = resolveRoleTargets(targets, participants);
+  return {
+    id: `fanout_${Date.now()}`,
+    startedAt: Date.now(),
+    metadata,
+    targets: expanded.map((target) => {
+      const participant = participants.find((p) => p.agentId === target.agentId);
+      return {
+        agentId: target.agentId,
+        role: participant?.role || 'unknown',
+        displayName: participant?.displayName || target.agentId,
+        message: target.message,
+      };
+    }),
+    completedAgentIds: [],
+    pendingAgentIds: expanded.map((target) => target.agentId),
+    disconnectedAgentIds: [],
+    partials: {},
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Decision logging
 // ---------------------------------------------------------------------------
@@ -342,6 +457,9 @@ function logDecision(decision) {
       break;
     case 'pause':
       log(`  Decision: pause (${decision.reason || ''})`);
+      break;
+    case 'continue_fan_out':
+      log('  Decision: continue_fan_out');
       break;
     default:
       log(`  Decision: ${JSON.stringify(decision).slice(0, 200)}`);
@@ -403,9 +521,28 @@ async function run() {
       const targets = decision.targets || [];
       const state = ctx.getState();
       const label = state?.pendingFanOut || `round-${round}`;
+      ctx._setActiveFanOut(buildActiveFanOutSnapshot(targets, ctx.participants, decision.metadata || {}));
 
       log(`\n--- Fan-out ${round} (${label}) -> ${targets.length} target(s) ---`);
       const responses = await resolveTargets(targets, round, label, ctx.participants);
+      const active = ctx.getActiveFanOut();
+      if (active) {
+        const completedAgentIds = responses.map((response) => response.agentId);
+        const partials = { ...active.partials };
+        for (const response of responses) {
+          partials[response.agentId] = {
+            response: response.response,
+            responseLength: response.response.length,
+            updatedAt: Date.now(),
+          };
+        }
+        ctx._setActiveFanOut({
+          ...active,
+          completedAgentIds,
+          pendingAgentIds: active.pendingAgentIds.filter((agentId) => !completedAgentIds.includes(agentId)),
+          partials,
+        });
+      }
 
       ctx.turnIndex++;
       try {
@@ -414,6 +551,56 @@ async function run() {
         log(`  onFanOutComplete error: ${err.message}`);
         decision = { type: 'stop', reason: `hook_error: ${err.message}` };
       }
+      ctx._clearActiveFanOut();
+      logDecision(decision);
+      round++;
+
+    } else if (decision.type === 'continue_fan_out') {
+      const active = ctx.getActiveFanOut();
+      if (!active || !Array.isArray(active.pendingAgentIds) || active.pendingAgentIds.length === 0) {
+        log('  No active pending fan-out to continue.');
+        break;
+      }
+
+      const targets = active.targets
+        .filter((target) => active.pendingAgentIds.includes(target.agentId))
+        .map((target) => ({ agentId: target.agentId, message: target.message }));
+
+      log(`\n--- Continue Fan-out ${round} (${active.metadata?.label || 'resume'}) -> ${targets.length} pending target(s) ---`);
+      const responses = await resolveTargets(
+        targets,
+        round,
+        active.metadata?.label || `continue-${round}`,
+        ctx.participants,
+      );
+
+      const completedAgentIds = [...new Set([
+        ...active.completedAgentIds,
+        ...responses.map((response) => response.agentId),
+      ])];
+      const partials = { ...active.partials };
+      for (const response of responses) {
+        partials[response.agentId] = {
+          response: response.response,
+          responseLength: response.response.length,
+          updatedAt: Date.now(),
+        };
+      }
+      ctx._setActiveFanOut({
+        ...active,
+        completedAgentIds,
+        pendingAgentIds: active.pendingAgentIds.filter((agentId) => !responses.some((response) => response.agentId === agentId)),
+        partials,
+      });
+
+      ctx.turnIndex++;
+      try {
+        decision = await plugin.onFanOutComplete(ctx, responses);
+      } catch (err) {
+        log(`  onFanOutComplete error: ${err.message}`);
+        decision = { type: 'stop', reason: `hook_error: ${err.message}` };
+      }
+      ctx._clearActiveFanOut();
       logDecision(decision);
       round++;
 

@@ -1,0 +1,292 @@
+{
+  "id": "spec_room",
+  "name": "Spec Room",
+  "version": "1.0.0",
+  "orchestratorType": "spec_room",
+  "description": "Turn a rough idea into a concrete spec through an implementer-owned write/review/revise loop",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["implementer", "planner", "critic"],
+    "optional": ["researcher"],
+    "minCount": {
+      "planner": 1,
+      "critic": 1,
+      "implementer": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 6, "min": 1, "max": 6 },
+    "maxTurns": { "default": 16, "min": 4, "max": 100 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 90000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "implementer",
+    "turnFloorFormula": "1 + N"
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "specPhase",
+        "label": "Phase",
+        "phases": ["write", "review", "revise", "complete"],
+        "phaseLabels": {
+          "write": "Write",
+          "review": "Review",
+          "revise": "Revise",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "progress",
+        "key": "specProgress",
+        "label": "Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "counter-group",
+        "key": "specCounts",
+        "label": "Spec",
+        "layout": "row",
+        "counters": [
+          { "key": "contributors", "label": "Contributors", "color": "blue" },
+          { "key": "criteria", "label": "Criteria", "color": "green" },
+          { "key": "questions", "label": "Questions", "color": "orange" },
+          { "key": "tasks", "label": "Tasks", "color": "yellow" }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "contributorStatus",
+        "label": "Contributors"
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 90 },
+          { "key": "contributor", "label": "Contributor", "width": 140 },
+          { "key": "role", "label": "Role", "width": 120 },
+          { "key": "focus", "label": "Focus", "width": 180 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 320 }
+        ]
+      },
+      {
+        "type": "conversation-feed",
+        "key": "roomFeed",
+        "label": "Room Feed"
+      },
+      {
+        "type": "code-blocks",
+        "key": "specArtifacts",
+        "label": "Spec",
+        "language": "markdown"
+      }
+    ]
+  },
+  "objective": {
+    "required": true,
+    "placeholder": "Describe the feature, workflow, or problem to turn into a spec"
+  },
+  "display": {
+    "typeLabel": "Spec Room",
+    "typeTag": "SPEC",
+    "cycleNoun": "Pass",
+    "reportTitle": "Spec Room Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Authoring the canonical spec",
+      "fanOut": "Running the current spec pass",
+      "singleTurn": "Unexpected single-turn flow",
+      "synthesis": "Checking the canonical spec file",
+      "planning": "Preparing the next pass"
+    },
+    "phaseActivityMessages": {
+      "write": "Implementer researching and writing spec",
+      "review": "Reviewers reviewing spec",
+      "revise": "Implementer revising spec",
+      "complete": "Spec complete"
+    },
+    "defaultRoster": [
+      { "role": "implementer", "displayName": "Implementer" },
+      { "role": "planner", "displayName": "Planner" },
+      { "role": "critic", "displayName": "Critic" }
+    ],
+    "defaultAddRole": "implementer"
+  },
+  "report": {
+    "summaryMetrics": ["specCounts"],
+    "table": {
+      "metricKey": "contributionTable",
+      "columns": [
+        { "key": "phase", "label": "Phase", "width": 90 },
+        { "key": "contributor", "label": "Contributor", "width": 140 },
+        { "key": "role", "label": "Role", "width": 120 },
+        { "key": "focus", "label": "Focus", "width": 180 },
+        { "key": "status", "label": "Status", "width": 110 },
+        { "key": "summary", "label": "Summary", "width": 320 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "finalArtifacts", "label": "Final Spec", "language": "markdown" }
+    ]
+  },
+  "cli": {
+    "command": "spec-room",
+    "description": "Turn a rough idea into a concrete spec",
+    "positionalArgs": [
+      {
+        "name": "idea",
+        "type": "string",
+        "required": true,
+        "description": "Feature, workflow, or problem to turn into a spec",
+        "mapTo": "objective"
+      }
+    ],
+    "startParams": [
+      {
+        "name": "deliverable-type",
+        "type": "enum",
+        "required": false,
+        "default": "Technical Spec",
+        "choices": ["Product Spec", "Technical Spec", "Implementation Plan"],
+        "description": "What kind of spec artifact to produce",
+        "mapTo": "roomConfig.deliverableType"
+      },
+      {
+        "name": "audience",
+        "type": "enum",
+        "required": false,
+        "default": "Engineering",
+        "choices": ["Mixed", "Engineering", "Product"],
+        "description": "Who the finished spec should primarily serve",
+        "mapTo": "roomConfig.audience"
+      },
+      {
+        "name": "detail-level",
+        "type": "enum",
+        "required": false,
+        "default": "Detailed",
+        "choices": ["Concise", "Balanced", "Detailed"],
+        "description": "How dense and implementation-ready the spec should be",
+        "mapTo": "roomConfig.detailLevel"
+      },
+      {
+        "name": "must-include",
+        "type": "string_array",
+        "required": false,
+        "description": "Sections or ideas that must appear in the spec",
+        "mapTo": "roomConfig.mustInclude"
+      },
+      {
+        "name": "known-constraints",
+        "type": "string_array",
+        "required": false,
+        "description": "Constraints such as repo boundaries, deadlines, or technical limits",
+        "mapTo": "roomConfig.knownConstraints"
+      },
+      {
+        "name": "output-dir",
+        "type": "directory",
+        "required": true,
+        "description": "Directory chosen in the UI for the canonical spec markdown file",
+        "mapTo": "roomConfig.outputDir"
+      },
+      {
+        "name": "file-name",
+        "type": "string",
+        "required": true,
+        "default": "plan.md",
+        "description": "File name chosen in the UI for the canonical spec markdown file",
+        "mapTo": "roomConfig.fileName"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "specPhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      },
+      {
+        "key": "specProgress",
+        "label": "Progress",
+        "format": "progress"
+      },
+      {
+        "key": "specCounts",
+        "label": "Spec",
+        "format": "counter-group"
+      }
+    ],
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (pass {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "skill": {
+      "name": "spec-room",
+      "description": "Turn rough ideas into concrete build-ready specs",
+      "defaultObjective": "Turn the provided idea into a concrete, build-ready spec",
+      "contextGathering": {
+        "requiredInputs": ["idea"],
+        "optionalInputs": []
+      }
+    }
+  },
+  "roomConfigSchema": {
+    "deliverableType": {
+      "type": "enum",
+      "label": "Deliverable Type",
+      "options": ["Product Spec", "Technical Spec", "Implementation Plan"],
+      "default": "Technical Spec",
+      "description": "What kind of artifact the room should produce."
+    },
+    "audience": {
+      "type": "enum",
+      "label": "Audience",
+      "options": ["Mixed", "Engineering", "Product"],
+      "default": "Engineering",
+      "description": "Who the finished spec should primarily serve."
+    },
+    "detailLevel": {
+      "type": "enum",
+      "label": "Detail Level",
+      "options": ["Concise", "Balanced", "Detailed"],
+      "default": "Detailed",
+      "description": "How dense and implementation-ready the spec should be."
+    },
+    "mustInclude": {
+      "type": "string_array",
+      "label": "Must Include",
+      "default": [],
+      "minItems": 0,
+      "maxItems": 8,
+      "description": "Optional sections or ideas that must appear in the spec."
+    },
+    "knownConstraints": {
+      "type": "string_array",
+      "label": "Known Constraints",
+      "default": [],
+      "minItems": 0,
+      "maxItems": 8,
+      "description": "Optional constraints such as repo boundaries, deadlines, or technical limits."
+    },
+    "outputDir": {
+      "type": "directory",
+      "required": true,
+      "label": "Export Directory",
+      "description": "Directory chosen in the UI for the canonical spec markdown file."
+    },
+    "fileName": {
+      "type": "string",
+      "required": true,
+      "label": "Export File Name",
+      "default": "plan.md",
+      "placeholder": "plan.md",
+      "description": "File name chosen in the UI for the canonical spec markdown file. .md is added automatically when needed."
+    }
+  }
+}

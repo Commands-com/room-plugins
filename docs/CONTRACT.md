@@ -120,6 +120,7 @@ Allowed top-level keys:
 - `configSchema` (optional object)
 - `roomConfigSchema` (optional object)
 - `setup` (optional object)
+- `cli` (optional object)
 
 Unknown fields are rejected.
 
@@ -192,6 +193,7 @@ Allowed keys:
 - `cycleNoun`
 - `reportTitle`
 - `activityMessages`
+- `phaseActivityMessages`
 - `defaultRoster`
 - `defaultAddRole`
 
@@ -200,6 +202,8 @@ Rules:
 - String fields above must be non-empty when present.
 - `activityMessages` allowed keys only:
   - `idle`, `discovery`, `writing`, `fanOut`, `singleTurn`, `synthesis`, `planning`
+- `phaseActivityMessages` must be an object whose keys are emitted phase ids and whose values are non-empty strings.
+- When the plugin emits `metrics.currentPhase.active`, the host may prefer `display.phaseActivityMessages[currentPhase.active]` over the legacy bucketed `activityMessages`.
 - `defaultRoster` entries must be `{ role, displayName }` with both non-empty strings.
 
 ### 4.6 `report`
@@ -281,6 +285,11 @@ Rules:
 - `minItems` / `maxItems` are valid only for `string_array` and `number_array`.
 - user-provided `roomConfig` is validated against this schema before room creation.
 
+Note:
+
+- The current host does not support field-level persistence hints for remembered values.
+- A future extension may add a field such as `rememberValue: true` so rooms can request sticky values for inputs like `outputDir` without encoding that behavior in plugins.
+
 ### 4.9 `setup`
 
 `setup` controls compatibility/preflight gating in the room create flow.
@@ -294,6 +303,69 @@ Allowed keys:
 - `fixLabel` (non-empty string)
 - `allowMakeCompatible` (boolean)
 
+### 4.10 `cli`
+
+`cli` exposes room metadata the host can use to build command-line entry points
+and skill integrations.
+
+Allowed keys:
+
+- `command` (required non-empty string)
+- `description` (optional non-empty string)
+- `positionalArgs` (optional array)
+- `startParams` (optional array)
+- `statusFields` (optional array)
+- `computedStatusFields` (optional array)
+- `exitCodes` (optional object: `{ [reason]: integer >= 1 }`)
+- `statusTemplate` (optional non-empty string)
+- `listTemplate` (optional non-empty string)
+- `skill` (optional object)
+
+For `positionalArgs` and `startParams`, each entry may include:
+
+- `name` (required non-empty string)
+- `type` (`"string"`, `"boolean"`, `"directory"`, `"enum"`, or `"string_array"`)
+- `required` (optional boolean)
+- `default` (optional type-matching default)
+- `choices` (required non-empty string array for `"enum"`)
+- `description` (optional string)
+- `mapTo` (required non-empty string)
+
+Rules:
+
+- `mapTo` may target `objective`, `roomConfig.<field>`, or `orchestratorConfig.<field>`.
+- `choices` is valid only for `enum`.
+- argument names must be unique within `positionalArgs` and within `startParams`.
+- argument names must not use host-reserved generic CLI names. For example, `objective` is reserved and should be mapped via a different argument name such as `idea` with `mapTo: "objective"`.
+
+For `statusFields`, each entry must be:
+
+- `key` (required non-empty string)
+- `label` (required non-empty string)
+- `format` (required non-empty string)
+- `extract` (optional non-empty string)
+
+For `computedStatusFields`, each entry must be:
+
+- `name` (required non-empty string)
+- `label` (required non-empty string)
+- `format` (required non-empty string)
+- `derive` (required non-empty string)
+
+For `skill`, allowed keys:
+
+- `name` (required non-empty string)
+- `description` (required non-empty string)
+- `defaultObjective` (optional non-empty string)
+- `contextGathering` (optional object)
+
+`contextGathering` may include:
+
+- `requiredInputs` (optional string array)
+- `optionalInputs` (optional string array)
+
+Input names in `contextGathering` must reference declared `positionalArgs` or `startParams`.
+
 ## 5. Decision Contract
 
 Hooks that return decisions must return one of:
@@ -301,9 +373,11 @@ Hooks that return decisions must return one of:
 ```js
 { type: 'speak', agentId: string, message: string }
 
-{ type: 'fan_out', targets: [ { agentId: string, message: string } ] }
+{ type: 'fan_out', targets: [ { agentId: string, message: string } ], metadata?: object }
 
-{ type: 'fan_out', targets: [ { role: string, message: string } ] }
+{ type: 'fan_out', targets: [ { role: string, message: string } ], metadata?: object }
+
+{ type: 'continue_fan_out' }
 
 { type: 'pause', reason?: string }
 
@@ -320,6 +394,8 @@ Validation rules:
 - `fan_out` `role` values must match at least one participant role.
 - duplicate concrete participants inside one `fan_out` are rejected, including overlaps between explicit `agentId` targets and role-expanded targets.
 - every `fan_out` target `message` must be non-empty.
+- `fan_out.metadata`, when present, must be a JSON-serializable object.
+- `continue_fan_out` is valid only from `onResume(ctx)` when a paused fan-out exists.
 - `stop.reason` must be non-empty.
 
 If a decision is invalid:
@@ -394,7 +470,15 @@ Runtime currently emits:
 - participant disconnect:
 
 ```js
-{ type: 'participant_disconnected', agentId: string }
+{
+  type: 'participant_disconnected',
+  agentId: string,
+  fanOutId?: string,
+  progress?: {
+    completedAgentIds: string[],
+    pendingAgentIds: string[],
+  }
+}
 ```
 
 - fan-out partial completion:
@@ -402,11 +486,16 @@ Runtime currently emits:
 ```js
 {
   type: 'fan_out_partial',
+  fanOutId: string,
   agentId: string,
   displayName?: string,
   detail: {
     response: string,
     responseLength: number,
+  },
+  progress: {
+    completedAgentIds: string[],
+    pendingAgentIds: string[],
   }
 }
 ```
@@ -431,7 +520,21 @@ For `user_edit_state`, mutate plugin state directly via `ctx.setState(...)`; ret
 
 ### 6.6 `onResume(ctx)`
 
-Called only when room resumes from pause and there is no pending decision to replay.
+Called when a paused room resumes and there is no pending approval decision to replay.
+
+`ctx.getActiveFanOut()` may return a snapshot of the paused fan-out, including pending and completed targets.
+
+`onResume(ctx)` may return:
+
+- `null`
+- any normal decision type
+- `{ type: 'continue_fan_out' }`
+
+Resume behavior:
+
+- If `onResume` returns `{ type: 'continue_fan_out' }`, the host re-dispatches only the pending fan-out targets with their original messages.
+- If `onResume` returns a different decision, the paused fan-out is discarded and the returned decision is executed.
+- If `onResume` returns `null` and a paused fan-out exists, the host auto-continues the pending fan-out for backward compatibility.
 
 ### 6.7 `refreshPendingDecision(ctx, pendingDecision)`
 
@@ -466,6 +569,7 @@ Hook `ctx` includes immutable snapshots plus helper methods:
   turnIndex,
 
   invokeLLM(prompt, options?),
+  getActiveFanOut(),
   getState(),
   setState(state),
   setCycle(n),
@@ -511,7 +615,43 @@ async function makeCompatible(payload, ctx) {}
 - `requestLocalPrompt`
 - `isProfileRunning`
 
-### 7.1 `invokeLLM(prompt, options?)`
+### 7.1 `getActiveFanOut()`
+
+Returns `null` when no fan-out is currently active or paused, otherwise:
+
+```js
+{
+  id: string,
+  startedAt: number,
+  metadata: object | null,
+  targets: [
+    {
+      agentId: string,
+      role: string,
+      displayName: string,
+      message: string,
+    }
+  ],
+  completedAgentIds: string[],
+  pendingAgentIds: string[],
+  disconnectedAgentIds: string[],
+  partials: {
+    [agentId]: {
+      response?: string,
+      responseLength?: number,
+      updatedAt: number,
+    }
+  }
+}
+```
+
+Notes:
+
+- available during any hook, including `onResume(ctx)`
+- reflects paused fan-out state after disconnects or room pauses
+- `fan_out.metadata` flows through into the snapshot and related events
+
+### 7.2 `invokeLLM(prompt, options?)`
 
 Options:
 
@@ -519,28 +659,52 @@ Options:
 - `allow_tool_use`: defaults to `true`
 - `timeoutMs`: defaults to `limits.llmTimeoutMs`
 - `max_output_chars`: optional output cap
+- `maxRetries`: optional integer, max `3`
+- `responseFormat`: optional structured-output request:
+  - `type`: must be `"json_schema"`
+  - `name`: non-empty string
+  - `schema`: JSON Schema whose root type must be `object` or `array`
+  - `strict`: must be `true` in v1
 
 Return shape:
 
 ```js
 // success
-{ ok: true, text: string, usage: { input_tokens: number, output_tokens: number } }
+{
+  ok: true,
+  text: string,
+  data?: unknown,
+  usage: { input_tokens: number, output_tokens: number } | null,
+}
 
 // error
-{ ok: false, error: { code: string, message: string } }
+{
+  ok: false,
+  error: {
+    code: 'invalid_json' | 'schema_validation_failed' | 'invalid_response_format' | 'llm_timeout' | 'llm_error',
+    message: string,
+  },
+  validationErrors?: [{ path: string, message: string }],
+  text?: string,
+  raw?: unknown,
+  usage?: { input_tokens: number, output_tokens: number } | null,
+}
 ```
 
 Important:
 
 - LLM calls route through a local participant.
 - If no local participant exists, call returns `{ ok: false, error }`.
+- Without `responseFormat`, behavior is unchanged.
+- When `responseFormat` is present, the host validates and parses the response and returns `result.data` on success.
+- On parse or schema-validation failure, the host may retry up to `maxRetries` times, augmenting the prompt with error context on each retry.
 
-### 7.2 Plugin state helpers
+### 7.3 Plugin state helpers
 
 - `getState()` returns deep-cloned plugin state.
 - `setState(state)` stores deep-cloned plugin state.
 
-### 7.3 Metrics/report helpers
+### 7.4 Metrics/report helpers
 
 - `emitMetrics(metrics)` updates latest room metrics and emits telemetry.
 - `getFinalReport()` returns summary fields for final room report.
@@ -577,7 +741,7 @@ Rules:
 - entries match plugin directory names, not `manifest.id`
 - when `sha256` is present, full plugin integrity is verified
 - hashing includes all files (including `node_modules`) and file paths
-- symlinks are rejected during integrity hashing
+- internal relative symlinks are allowed during integrity hashing only when they resolve within the plugin root; absolute symlinks or symlinks that escape the plugin root are rejected
 - plugin with `node_modules` and no `sha256` is allowed but warns
 
 Dev-only bypass (not for production):

@@ -1,0 +1,29 @@
+{
+  "label": "draft",
+  "responses": [
+    {
+      "agentId": "planner_1",
+      "response": "## Perspective\nThe room should turn one rough idea into a concrete first-pass spec.\n\n## Strong Recommendations\n- Keep the flow short and opinionated.\n- Bias toward shipping a useful v1 spec.\n- Make open questions explicit instead of burying them.\n\n## Requirements\n- Accept a rough objective.\n- Produce a draft spec after one fan-out pass.\n- Capture goals, non-goals, risks, and open questions.\n\n## Acceptance Criteria\n- The draft can be reviewed without re-explaining the objective.\n- The draft proposes a realistic v1 scope.\n\n## Risks\n- The room could drift into brainstorming if prompts are too loose.\n\n## Open Questions\n- Should the room save the final spec to disk later?",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    {
+      "agentId": "critic_1",
+      "response": "## Perspective\nA good spec room should challenge ambiguity, not just summarize it.\n\n## Strong Recommendations\n- Call out where the idea is underspecified.\n- Force explicit non-goals.\n- Prefer scope cuts over vague future work.\n\n## Requirements\n- Include a critique pass.\n- Track missing acceptance criteria.\n- Surface hidden assumptions.\n\n## Acceptance Criteria\n- The resulting spec is concrete enough to build from.\n- Unknowns are listed as open questions.\n\n## Risks\n- Agents may sound confident without enough grounding.\n- Too many sections could make the room feel heavy.\n\n## Open Questions\n- How strict should the room be about evidence or repo context?",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    },
+    {
+      "agentId": "implementer_1",
+      "response": "## Perspective\nThe room should feel like a practical handoff into implementation.\n\n## Strong Recommendations\n- Use the existing room plugin contract.\n- Keep the state machine deterministic.\n- End with a task breakdown, not just prose.\n\n## Requirements\n- Two-pass flow: draft then critique.\n- Rebuild pending fan-out decisions after edits.\n- Render dashboard metrics for progress and contributions.\n\n## Acceptance Criteria\n- The final artifact contains implementation steps.\n- The room can be exercised in the dev harness.\n\n## Risks\n- Synthesis may fail if the LLM returns messy formatting.\n\n## Open Questions\n- Do we eventually extract shared helpers for other text-heavy rooms?",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0
+      }
+    }
+  ]
+}

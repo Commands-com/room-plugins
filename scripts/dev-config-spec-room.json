@@ -1,0 +1,18 @@
+{
+  "objective": "Create a spec room that turns a rough product or engineering idea into a concrete, buildable spec for a first shippable version.",
+  "roomConfig": {
+    "deliverableType": "product_spec",
+    "audience": "mixed",
+    "detailLevel": "balanced",
+    "mustInclude": [
+      "acceptance criteria",
+      "implementation plan",
+      "open questions"
+    ],
+    "knownConstraints": [
+      "first pass only",
+      "prefer practical v1 scope over exhaustive detail"
+    ]
+  },
+  "orchestratorConfig": {}
+}

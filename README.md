@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/7c6ddcd6-45db-4b71-9838-c8f262bd4e7f
 | **Cross-platform** | Bash installer for macOS/Linux, Node.js installer for Windows |
 | **Full lifecycle** | Hooks for init, start, turn results, fan-out, events, resume, shutdown |
 | **Dashboard panels** | Counter groups, progress bars, charts, agent status, tables, conversation feeds |
-| **SHA-256 integrity** | Allowlist with optional hash pins, symlink rejection, dev-only bypass |
+| **SHA-256 integrity** | Allowlist with optional hash pins, safe in-tree symlink hashing, dev-only bypass |
 | **Declarative rooms** | Define phases, dispatch, and dashboard in `room.yaml` — family runtimes handle orchestration |
 | **Copy-and-go** | Clone `template-room`, edit manifest and handler, reinstall |
 | **Additive** | External room types extend built-ins — never override |
@@ -134,10 +134,12 @@ In Desktop: **Settings > Developer > Dev Mode + Trust All Plugins**.
 
 ```
 room-plugins/template-room                  Classic reference implementation (copy to create new)
+room-plugins/spec-room                      Classic multi-pass spec authoring room
 room-plugins/fft-autotune                   Advanced empirical search room (classic)
 room-plugins/postgres-query-optimizer       Declarative room (Docker harness, index + rewrite strategies)
 room-plugins/redshift-query-optimizer       Declarative room (live cluster, rewrite + advisory strategies)
 room-plugins/sql-optimizer-core             Shared library for SQL optimizer plugins
+scripts/dev-config-spec-room.json           Example config for running Spec Room locally
 scripts/dev-runner.js                       Dev harness — run plugins locally with Ollama or fixtures
 scripts/install-room-plugins.sh             Bash installer (macOS/Linux)
 scripts/install-room-plugins.mjs            Node.js installer (cross-platform)
@@ -146,6 +148,7 @@ scripts/compute-room-plugin-sha256.mjs      Compute single plugin hash
 docs/CONTRACT.md                            Full plugin manifest, hook, and runtime contract
 docs/DECLARATIVE_ROOMS.md                   Declarative room definitions (room.yaml, engine, harness)
 docs/DASHBOARD_GUIDE.md                     Dashboard panel types and metrics authoring
+docs/proposals/host-structured-output-and-fanout-state.md Host API proposal motivated by spec-room
 GETTING_STARTED.md                          End-to-end workflow from install to testing
 ```
 
@@ -156,3 +159,4 @@ GETTING_STARTED.md                          End-to-end workflow from install to 
 - [Room Plugin Contract](./docs/CONTRACT.md)
 - [Declarative Rooms Guide](./docs/DECLARATIVE_ROOMS.md)
 - [Dashboard Guide](./docs/DASHBOARD_GUIDE.md)
+- [Host API Proposal: Structured Output + Fan-Out State](./docs/proposals/host-structured-output-and-fanout-state.md)

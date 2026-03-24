@@ -82,6 +82,7 @@ All keys are validated. Unknown keys are rejected at every nesting level.
 | `prompts` | no | Prompt definitions with context bindings |
 | `dashboard` | no | Dashboard panel definitions |
 | `report` | no | Report layout |
+| `cli` | no | Command/skill metadata for host-generated CLI integrations |
 
 ### `display`
 
@@ -102,6 +103,11 @@ display:
     discovery: Analyzing schema
     fanOut: Running benchmarks
     synthesis: Voting on results
+  phaseActivityMessages:
+    baseline: Running baseline measurements
+    planning: Choosing next candidate set
+    cycle: Workers testing candidate changes
+    audit: Auditing the leading candidate
 ```
 
 ### `roles`
@@ -389,6 +395,42 @@ report:
   codeBlocks:
     - { metricKey: solutions, label: Solutions, language: sql }
 ```
+
+### `cli`
+
+Declarative rooms may expose command/skill metadata directly from `room.yaml`.
+This lets the host generate command entry points and related skill integrations
+for the room.
+
+```yaml
+cli:
+  command: postgres-query-optimize
+  description: Optimize PostgreSQL queries with empirical benchmarking
+  positionalArgs:
+    - name: connection-string
+      type: string
+      mapTo: roomConfig.dbUrl
+  startParams:
+    - name: schema-source
+      type: enum
+      choices: [introspect, dump, migrations]
+      default: introspect
+      mapTo: roomConfig.schemaSource
+  statusFields:
+    - key: currentPhase
+      label: Phase
+      format: text
+      extract: active
+  skill:
+    name: postgres-query-optimize
+    description: Optimize slow SQL queries using multi-agent benchmarking
+    defaultObjective: Analyze and optimize the provided queries for maximum performance
+    contextGathering:
+      requiredInputs: [connection-string]
+```
+
+The field-level schema for `cli` matches the classic-plugin `manifest.json`
+contract in [`CONTRACT.md`](./CONTRACT.md).
 
 ## Family: `empirical_search`
 
