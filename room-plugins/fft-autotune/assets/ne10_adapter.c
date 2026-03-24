@@ -7,8 +7,8 @@
 typedef struct {
     ne10_int32_t nfft;
     ne10_fft_cfg_float32_t cfg;
-    ne10_fft_cpx_float32_t inbuf[1024];
-    ne10_fft_cpx_float32_t outbuf[1024];
+    ne10_fft_cpx_float32_t inbuf[16384];
+    ne10_fft_cpx_float32_t outbuf[16384];
     int init_failed;
 } ne10_cached_plan_t;
 
@@ -45,6 +45,7 @@ void ne10_mixed_radix_generic_butterfly_inverse_float32_neon(
 static ne10_cached_plan_t ne10_plan_64 = { 64, NULL, {{0}}, {{0}}, 0 };
 static ne10_cached_plan_t ne10_plan_256 = { 256, NULL, {{0}}, {{0}}, 0 };
 static ne10_cached_plan_t ne10_plan_1024 = { 1024, NULL, {{0}}, {{0}}, 0 };
+static ne10_cached_plan_t ne10_plan_16384 = { 16384, NULL, {{0}}, {{0}}, 0 };
 
 static ne10_cached_plan_t* ne10_cached_plan_for_size(ne10_int32_t nfft) {
     switch (nfft) {
@@ -54,6 +55,8 @@ static ne10_cached_plan_t* ne10_cached_plan_for_size(ne10_int32_t nfft) {
             return &ne10_plan_256;
         case 1024:
             return &ne10_plan_1024;
+        case 16384:
+            return &ne10_plan_16384;
         default:
             return NULL;
     }
@@ -90,6 +93,10 @@ static void ne10_release_cached_plans(void) {
     if (ne10_plan_1024.cfg != NULL) {
         ne10_fft_destroy_c2c_float32(ne10_plan_1024.cfg);
         ne10_plan_1024.cfg = NULL;
+    }
+    if (ne10_plan_16384.cfg != NULL) {
+        ne10_fft_destroy_c2c_float32(ne10_plan_16384.cfg);
+        ne10_plan_16384.cfg = NULL;
     }
 }
 
@@ -128,4 +135,8 @@ void dft_256(const complex float *input, complex float *output) {
 
 void dft_1024(const complex float *input, complex float *output) {
     ne10_reference_fft(1024, input, output);
+}
+
+void dft_16384(const complex float *input, complex float *output) {
+    ne10_reference_fft(16384, input, output);
 }

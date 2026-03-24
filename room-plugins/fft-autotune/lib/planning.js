@@ -196,14 +196,17 @@ function latestNe10ReferenceCandidate(state, bucketKey) {
 
 function buildPlanningBaselineSummary(state, config) {
   const rows = getExpectedBucketKeys(config).map((bucketKey) => {
-    const scalar = state.baselines[bucketKey] || null;
-    const ne10 = latestNe10ReferenceCandidate(state, bucketKey);
+    const scalar = state.baselineArtifacts?.[bucketKey]?.benchmark || null;
+    const canonical = state.baselines[bucketKey] || null;
+    const canonicalSource = state.baselineSources?.[bucketKey] || null;
     return {
       bucketKey,
       scalarMedianNs: Number.isFinite(scalar?.medianNs) ? Math.round(scalar.medianNs) : null,
-      ne10MedianNs: Number.isFinite(ne10?.benchmark?.medianNs) ? Math.round(ne10.benchmark.medianNs) : null,
-      ne10SpeedupPct: Number.isFinite(ne10?.benchmark?.speedupVsBaseline)
-        ? Number(((ne10.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
+      canonicalBaselineMedianNs: Number.isFinite(canonical?.medianNs) ? Math.round(canonical.medianNs) : null,
+      canonicalFamily: canonicalSource?.family || null,
+      canonicalSourceKind: canonicalSource?.sourceKind || null,
+      canonicalVsScalarPct: Number.isFinite(canonical?.medianNs) && Number.isFinite(scalar?.medianNs) && canonical.medianNs > 0
+        ? Number((((scalar.medianNs / canonical.medianNs) - 1) * 100).toFixed(1))
         : null,
     };
   });
@@ -343,21 +346,22 @@ export function buildBaselineTargets(ctx, state, config) {
         '',
         '=== Ne10 NEON REFERENCE BENCHMARK (MANDATORY) ===',
         'A pinned Ne10 NEON FFT reference pack is scaffolded into the output directory.',
-        'After establishing each scalar baseline, ALSO compile and benchmark the Ne10 adapter for the same bucket.',
-        'This establishes the NEON performance ceiling — how fast a known-good NEON FFT runs on this machine.',
+        'Try the Ne10 adapter first for every missing bucket.',
+        'The Ne10 benchmark is the canonical same-run baseline for speedup calculations and frontier ranking.',
+        'Only if the Ne10 adapter fails to compile, validate, or benchmark cleanly for a bucket should you fall back to a scalar reference for that bucket.',
         'Read NE10_USAGE.txt for the exact compile command. The adapter uses harness.c like any other candidate.',
         'Report each Ne10 benchmark as a regular (non-baseline) result with family "ne10_neon_reference" and isBaseline: false.',
-        'Do NOT mark Ne10 results as isBaseline: true — the scalar reference is the canonical baseline.',
-        'The gap between the scalar baseline and the Ne10 speedupVsBaseline tells you how much NEON headroom exists.',
-        'If Ne10 is not faster than the auto-vectorized scalar baseline for a given bucket, NEON intrinsics will not help for that size.',
+        'Do NOT mark Ne10 results as isBaseline: true — the room will automatically adopt the Ne10 benchmark as the canonical baseline for that bucket.',
+        'The gap between the scalar reference and the Ne10 baseline tells you how much NEON headroom exists.',
+        'If Ne10 is not faster than the scalar reference for a given bucket, NEON intrinsics will likely not help for that size.',
         '',
         'This startup phase is baseline-only. Do not propose new search candidates yet.',
         '',
         'Establish a fresh same-run baseline for every missing bucket below before candidate ranking begins:',
         baselineText,
         '',
-        'For each bucket: (1) compile + validate + benchmark a scalar reference, (2) compile + validate + benchmark the Ne10 adapter.',
-        'A baseline must come from compile + validate + benchmark evidence produced in this run.',
+        'For each bucket: (1) compile + validate + benchmark the Ne10 adapter, (2) only if that fails, compile + validate + benchmark a scalar reference fallback.',
+        'A canonical baseline must come from compile + validate + benchmark evidence produced in this run.',
         'You may reuse existing workspace source only if you compile, validate, and benchmark it again now.',
         'If no suitable scalar baseline exists, generate a straightforward correct iterative radix-4 DIF reference implementation for that bucket.',
         'Your baseline .c file must export: void dft_<N>(const complex float* input, complex float* output);',
@@ -367,24 +371,24 @@ export function buildBaselineTargets(ctx, state, config) {
         '',
         'Reply with JSON only using this shape:',
         '{',
-        '  "summary": "what baseline artifacts were created",',
+        '  "summary": "what Ne10 baselines or scalar fallbacks were created",',
         '  "results": [',
         '    {',
-        '      "proposalId": "baseline-n64-1",',
+        '      "proposalId": "baseline-n64-ne10",',
         '      "bucketKey": "n64-apple_silicon_neon",',
-        '      "family": "baseline_reference",',
-        '      "isBaseline": true,',
-        '      "treeSpec": "reference or baseline implementation",',
+        '      "family": "ne10_neon_reference",',
+        '      "isBaseline": false,',
+        '      "treeSpec": "ne10 mixed radix reference",',
         '      "leafSizes": [8],',
-        '      "permutationStrategy": "natural_order",',
-        '      "twiddleStrategy": "baseline_table",',
-        '      "simdStrategy": "scalar",',
+        '      "permutationStrategy": "library_internal",',
+        '      "twiddleStrategy": "library_internal",',
+        '      "simdStrategy": "neon",',
         '      "compile": { "ok": true, "command": "clang ...", "exitCode": 0, "binaryPath": "...", "stderrPath": "" },',
         '      "validation": { "ok": true, "sampleCount": 64, "maxError": 0.0, "tolerance": 0.001, "failureReason": "", "validationPath": "path/to/validation.json" },',
         '      "benchmark": { "ok": true, "warmups": 5, "trials": 30, "medianNs": 13800, "p95Ns": 14200, "cvPct": 2.8, "samplePath": "..." },',
-        '      "baselineBenchmarks": [ { "bucketKey": "n64-apple_silicon_neon", "medianNs": 13800, "p95Ns": 14200, "cvPct": 2.8 } ],',
-        '      "artifactPaths": ["path/to/baseline.c", "path/to/validation.json", "path/to/bench.json"],',
-        '      "notes": "fresh same-run baseline"',
+        '      "baselineBenchmarks": [],',
+        '      "artifactPaths": ["path/to/ne10_adapter.c", "path/to/validation.json", "path/to/bench.json"],',
+        '      "notes": "fresh same-run Ne10 baseline"',
         '    }',
         '  ],',
         '  "candidateProposals": [],',
@@ -392,6 +396,7 @@ export function buildBaselineTargets(ctx, state, config) {
         '}',
         '',
         'Use the exact field names shown above. Do NOT invent alternate top-level keys like "candidates", "findings", or "proposals" here.',
+        'If you must fall back to scalar for a bucket, report that scalar result with family "baseline_reference", isBaseline: true, and include the scalar timing in baselineBenchmarks.',
         'Inside each result, use the exact schema above: proposalId, bucketKey, family, treeSpec, leafSizes, permutationStrategy, twiddleStrategy, simdStrategy, compile, validation, benchmark, baselineBenchmarks, artifactPaths, notes.',
         'Do NOT substitute alternate result keys like id, label, bucket, file, compileFlags, or a nested summary-only format. If a field is unavailable, keep the expected field and leave it empty/null rather than renaming it.',
         '',
@@ -485,8 +490,8 @@ export function buildCycleTargets(ctx, state, config) {
         getHarnessCompileHint(config),
         '',
         '=== NEON STRATEGY ===',
-        'Before writing a NEON candidate, check the Ne10 reference benchmark for this bucket (established during baseline).',
-        'If the Ne10 NEON number is not meaningfully faster than the scalar baseline, do NOT attempt NEON intrinsics for this bucket — the auto-vectorizer already saturates the hardware.',
+        'Before writing a NEON candidate, check the canonical Ne10 baseline for this bucket (established during baseline).',
+        'If the Ne10 baseline is not meaningfully faster than the scalar reference, do NOT attempt NEON intrinsics for this bucket — the auto-vectorizer already saturates the hardware.',
         'If NEON headroom exists, study the intrinsics patterns in third_party/ne10/modules/dsp/ (especially NE10_fft_float32.neonintrinsic.c and NE10_fft.neonintrinsic.h) before writing your candidate.',
         'If you claim "simdStrategy": "neon", the source must include real arm_neon.h intrinsics. Scalar C compiled with -march=native is NOT a NEON implementation.',
         '',
@@ -589,14 +594,14 @@ export function buildPlanningTargets(ctx, state, config) {
   const exploitFirstInstructions = state.cycleIndex <= 1
     ? [
         'This is the first planning cycle after fresh baselines. Be exploit-first, not novelty-first.',
-        'For every unresolved bucket, include at least one grounded proposal that directly follows the scalar baseline shape or the Ne10 reference shape for that same bucket.',
+        'For every unresolved bucket, include at least one grounded proposal that directly follows the scalar reference shape or the Ne10 baseline shape for that same bucket.',
         'At most one proposal per bucket may be a broad wildcard family. Use wildcard slots only after you include a grounded exploit-first proposal for that bucket.',
         'Do not spend n64 slots on transpose-heavy matrix families (four-step/six-step) unless the room already has evidence they beat the simpler radix-based plans.',
-        'If the Ne10 reference materially beats the scalar baseline for a bucket, prefer direct NEON lowering, Ne10-shaped mixed-radix plans, or minimal mutations of the baseline tree before proposing exotic constant-geometry layouts.',
+        'If the canonical incumbent baseline materially beats the scalar reference for a bucket, prefer direct lowerings or minimal mutations of that incumbent tree before proposing exotic constant-geometry layouts.',
       ]
     : [
         'Keep planning exploit-first unless the room has already plateaued on a bucket.',
-        'Prefer incumbent mutations or baseline/Ne10-shaped lowerings before proposing broad new families.',
+        'Prefer incumbent mutations or scalar-reference/canonical-baseline-shaped lowerings before proposing broad new families.',
         'Use at most one wildcard family per bucket unless repeated repairs show the incumbent direction is exhausted.',
       ];
 
@@ -618,7 +623,7 @@ export function buildPlanningTargets(ctx, state, config) {
         'Existing proposal backlog (highest priority first):',
         backlogText,
         '',
-        'Canonical scalar baselines and Ne10 reference headroom by bucket:',
+        'Scalar reference context and canonical incumbent baselines by bucket:',
         baselineSummaryText,
         '',
         'Buckets still missing a fresh same-run baseline:',

@@ -2,7 +2,8 @@ import { buildCompatibilityReport, ensureScaffoldedWorkspace, getConfig } from '
 import { assignLanes } from './envelope.js';
 import { PHASES } from './constants.js';
 import { chooseStopReason, evaluateImprovement, mergeCycleArtifacts, recomputeFrontier, updateDiversity } from './candidates.js';
-import { getMissingWinnerBucketKeys } from './buckets.js';
+import { getMissingBaselineBucketKeys, getMissingWinnerBucketKeys } from './buckets.js';
+import { loadFrontierSnapshot, persistFrontierSnapshot } from './frontier-snapshot.js';
 import { createInitialState, derivePartialPhase, advancePhase, setPhase } from './phases.js';
 import { fallbackSeedProposals, winnerMutationProposals, enqueueProposals, selectActivePromotedProposals, buildPendingDecision } from './planning.js';
 import { emitStateMetrics } from './report.js';
@@ -22,6 +23,63 @@ const SCHEMA_REPAIR_SIGNAL_PATTERNS = [
   /"file"\s*:/,
   /"medianNs"\s*:/,
 ];
+
+function seedStateFromPriorFrontier(state, config) {
+  const snapshot = loadFrontierSnapshot(config);
+  if (!snapshot.ok || !snapshot.found || snapshot.seededCount === 0) {
+    return snapshot;
+  }
+
+  state.baselines = {
+    ...(state.baselines || {}),
+    ...(snapshot.baselines || {}),
+  };
+  state.baselineSources = {
+    ...(state.baselineSources || {}),
+    ...(snapshot.baselineSources || {}),
+  };
+
+  const existingCandidateIds = new Set((state.candidates || []).map((candidate) => candidate.candidateId));
+  for (const candidate of snapshot.seededCandidates || []) {
+    if (!existingCandidateIds.has(candidate.candidateId)) {
+      state.candidates.push(candidate);
+    }
+  }
+
+  state.bestByBucket = {
+    ...(state.bestByBucket || {}),
+    ...(snapshot.bestByBucket || {}),
+  };
+  state.frontierIds = Array.from(new Set([
+    ...(state.frontierIds || []),
+    ...(snapshot.frontierIds || []),
+  ]));
+
+  return snapshot;
+}
+
+function buildStopDecision(ctx, state, config, reason) {
+  setPhase(state, PHASES.COMPLETE);
+  state.pendingFanOut = null;
+  ctx.setState(state);
+  emitStateMetrics(ctx, state);
+  persistFrontierSnapshotSafely(state, config);
+  return {
+    type: 'stop',
+    reason,
+  };
+}
+
+function persistFrontierSnapshotSafely(state, config) {
+  if ((state?.frontierIds || []).length === 0) {
+    return;
+  }
+  try {
+    persistFrontierSnapshot(state, config);
+  } catch {
+    // Best effort only; do not block room completion on snapshot persistence.
+  }
+}
 
 function collectSchemaRepairBuilderResponses(state, ctx, responses) {
   return (Array.isArray(responses) ? responses : [])
@@ -61,15 +119,7 @@ function finishSearchCycle(ctx, state, config) {
       emitStateMetrics(ctx, state);
       return buildPendingDecision(ctx, state, config);
     }
-
-    setPhase(state, PHASES.COMPLETE);
-    state.pendingFanOut = null;
-    ctx.setState(state);
-    emitStateMetrics(ctx, state);
-    return {
-      type: 'stop',
-      reason: stopReason,
-    };
+    return buildStopDecision(ctx, state, config, stopReason);
   }
 
   if (state.proposalBacklog.length === 0) {
@@ -114,6 +164,18 @@ export function createPlugin() {
         type: 'stop',
         reason: 'global_preflight_failed',
       };
+    }
+
+    seedStateFromPriorFrontier(state, config);
+
+    if (getMissingBaselineBucketKeys(state, config).length === 0 && state.frontierIds.length > 0) {
+      state.cycleIndex = 1;
+      ctx.setCycle(state.cycleIndex);
+      setPhase(state, PHASES.SEARCH_PLANNING);
+      state.pendingFanOut = 'planning';
+      ctx.setState(state);
+      emitStateMetrics(ctx, state);
+      return buildPendingDecision(ctx, state, config);
     }
 
     setPhase(state, PHASES.BASELINE);
@@ -177,16 +239,14 @@ export function createPlugin() {
 
       selectActivePromotedProposals(state, config);
       if (state.activePromotedProposals.length === 0) {
-        setPhase(state, PHASES.COMPLETE);
-        state.pendingFanOut = null;
-        ctx.setState(state);
-        emitStateMetrics(ctx, state);
-        return {
-          type: 'stop',
-          reason: state.frontierIds.length > 0 && getMissingWinnerBucketKeys(state, config).length === 0
+        return buildStopDecision(
+          ctx,
+          state,
+          config,
+          state.frontierIds.length > 0 && getMissingWinnerBucketKeys(state, config).length === 0
             ? 'convergence'
             : 'convergence_with_open_issues',
-        };
+        );
       }
 
       setPhase(state, PHASES.CANDIDATE_CODEGEN);
@@ -208,16 +268,14 @@ export function createPlugin() {
       }
       selectActivePromotedProposals(state, config);
       if (state.activePromotedProposals.length === 0) {
-        setPhase(state, PHASES.COMPLETE);
-        state.pendingFanOut = null;
-        ctx.setState(state);
-        emitStateMetrics(ctx, state);
-        return {
-          type: 'stop',
-          reason: state.frontierIds.length > 0 && getMissingWinnerBucketKeys(state, config).length === 0
+        return buildStopDecision(
+          ctx,
+          state,
+          config,
+          state.frontierIds.length > 0 && getMissingWinnerBucketKeys(state, config).length === 0
             ? 'convergence'
             : 'convergence_with_open_issues',
-        };
+        );
       }
 
       setPhase(state, PHASES.CANDIDATE_CODEGEN);
@@ -334,8 +392,11 @@ export function createPlugin() {
     return buildPendingDecision(ctx, state, config) || pendingDecision;
   }
 
-  function shutdown() {
-    // No-op.
+  function shutdown(ctx) {
+    const state = ctx?.getState?.();
+    if (!state) return;
+    const config = getConfig(ctx);
+    persistFrontierSnapshotSafely(state, config);
   }
 
   return {

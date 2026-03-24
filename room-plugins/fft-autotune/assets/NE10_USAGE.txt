@@ -18,6 +18,7 @@ It exports the room's required signatures:
   void dft_64(const complex float* input, complex float* output);
   void dft_256(const complex float* input, complex float* output);
   void dft_1024(const complex float* input, complex float* output);
+  void dft_16384(const complex float* input, complex float* output);
 
 The adapter caches Ne10 plan/config state per FFT size and reuses scratch
 buffers, so same-run benchmarks measure the NEON FFT plus marshaling cost

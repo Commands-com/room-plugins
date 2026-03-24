@@ -51,9 +51,25 @@ function verifyResultArtifacts(result, config) {
   return true;
 }
 
-function recordBaselineArtifact(state, result, baseline) {
+function recordCanonicalBaseline(state, result, baseline, sourceKind = 'benchmark_result') {
   if (!baseline?.bucketKey) return;
   state.baselines[baseline.bucketKey] = baseline;
+  state.baselineSources[baseline.bucketKey] = {
+    bucketKey: baseline.bucketKey,
+    family: result?.family || '',
+    sourceKind,
+    compile: result?.compile || null,
+    validation: result?.validation || null,
+    benchmark: result?.benchmark || null,
+    artifactPaths: result?.artifactPaths || [],
+    notes: result?.notes || '',
+    implementedByWorkerId: result?.implementedByWorkerId || '',
+    proposedByWorkerId: result?.proposedByWorkerId || '',
+  };
+}
+
+function recordScalarReferenceArtifact(state, result, baseline) {
+  if (!baseline?.bucketKey) return;
   state.baselineArtifacts[baseline.bucketKey] = {
     bucketKey: baseline.bucketKey,
     family: result.family,
@@ -241,6 +257,7 @@ export function mergeCycleArtifacts(state, responses, config, options = {}) {
   for (const result of results) {
     const promoted = state.activePromotedProposals.find((proposal) => proposal.proposalId === result.proposalId);
     const isBaselineResult = Boolean(result.isBaseline || promoted?.isBaselineCandidate);
+    const isNe10ReferenceResult = result.family === 'ne10_neon_reference';
     // Only accept baselines from results that have verified successful
     // compile + validation + benchmark evidence.  Without all three, the
     // result cannot serve as trustworthy same-run baseline data.
@@ -256,14 +273,17 @@ export function mergeCycleArtifacts(state, responses, config, options = {}) {
       }
       : null;
     if (isBaselineResult && hasVerifiedEvidence) {
+      if (directBaseline) {
+        recordScalarReferenceArtifact(state, result, directBaseline);
+      }
       for (const baseline of result.baselineBenchmarks) {
         if (baseline.bucketKey && Number.isFinite(baseline.medianNs)) {
-          recordBaselineArtifact(state, result, baseline);
+          recordScalarReferenceArtifact(state, result, baseline);
         }
       }
-      if (directBaseline) {
-        recordBaselineArtifact(state, result, directBaseline);
-      }
+    }
+    if (isNe10ReferenceResult && directBaseline) {
+      recordCanonicalBaseline(state, result, directBaseline, 'ne10_reference');
     } else if (hasVerifiedEvidence) {
       for (const baseline of result.baselineBenchmarks) {
         if (
@@ -271,11 +291,11 @@ export function mergeCycleArtifacts(state, responses, config, options = {}) {
           && Number.isFinite(baseline.medianNs)
           && !state.baselines[baseline.bucketKey]
         ) {
-          recordBaselineArtifact(state, result, baseline);
+          recordCanonicalBaseline(state, result, baseline, 'reported_comparison');
         }
       }
     }
-    if (isBaselineResult) {
+    if (isBaselineResult || isNe10ReferenceResult) {
       recordBaselineAttempt(state, result, directBaseline || result.baselineBenchmarks[0] || null);
     }
   }

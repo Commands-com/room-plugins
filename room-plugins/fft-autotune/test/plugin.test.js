@@ -369,6 +369,71 @@ describe('parseWorkerEnvelope — alternate field names', () => {
 });
 
 describe('mergeCycleArtifacts baseline recovery', () => {
+  it('promotes a verified Ne10 reference result to the canonical bucket baseline', () => {
+    const state = createInitialState(makeMockCtx());
+    state.cycleIndex = 1;
+    state.lanesByAgentId = { builder_1: 'builder' };
+
+    const config = makeConfig({
+      workspacePath: '',
+      outputDir: '',
+    });
+
+    const responses = [{
+      agentId: 'builder_1',
+      response: JSON.stringify({
+        summary: 'benchmarked Ne10 reference',
+        results: [{
+          proposalId: 'baseline-n16384-ne10',
+          bucketKey: 'n16384-apple_silicon_neon',
+          family: 'ne10_neon_reference',
+          isBaseline: false,
+          treeSpec: 'ne10 mixed radix',
+          permutationStrategy: 'library_internal',
+          twiddleStrategy: 'library_internal',
+          simdStrategy: 'neon',
+          compile: {
+            ok: true,
+            command: 'clang -O3 ...',
+            exitCode: 0,
+            stderrPath: '',
+            binaryPath: '/tmp/fft-workspace/ne10_16384.bin',
+          },
+          validation: {
+            ok: true,
+            sampleCount: 64,
+            maxError: 0.0001,
+            tolerance: 0.001,
+            failureReason: '',
+            validationPath: '/tmp/fft-workspace/ne10_16384.validation.json',
+          },
+          benchmark: {
+            ok: true,
+            warmups: 5,
+            trials: 30,
+            medianNs: 8800,
+            p95Ns: 9100,
+            cvPct: 2.4,
+            samplePath: '/tmp/fft-workspace/ne10_16384.bench.json',
+          },
+          baselineBenchmarks: [],
+          artifactPaths: [
+            '/tmp/fft-workspace/ne10_16384.bin',
+            '/tmp/fft-workspace/ne10_16384.validation.json',
+            '/tmp/fft-workspace/ne10_16384.bench.json',
+          ],
+          notes: 'canonical neon baseline',
+        }],
+        candidateProposals: [],
+        audits: [],
+      }),
+    }];
+
+    mergeCycleArtifacts(state, responses, config);
+
+    expect(state.baselines['n16384-apple_silicon_neon']?.medianNs).toBeCloseTo(8800);
+  });
+
   it('recovers a missing bucket baseline from a non-baseline result when explicitly reported', () => {
     const state = createInitialState(makeMockCtx());
     state.cycleIndex = 3;
@@ -930,18 +995,29 @@ describe('buildTriedCandidatesSummary', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildBaselineRows', () => {
-  it('emits scalar baseline and Ne10 reference rows per bucket', () => {
+  it('emits scalar reference and canonical Ne10 baseline rows per bucket', () => {
     const config = makeConfig({ targetSizes: [64] });
     const ctx = makeMockCtx({ roomConfig: { targetSizes: [64] } });
     const state = createInitialState(ctx);
     state.baselines = {
-      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 98.28, cvPct: 8.86 },
+      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 60.51, cvPct: 3.1 },
+    };
+    state.baselineSources = {
+      'n64-apple_silicon_neon': {
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'ne10_neon_reference',
+        sourceKind: 'ne10_reference',
+        implementedByWorkerId: 'builder_1',
+      },
     };
     state.baselineArtifacts = {
       'n64-apple_silicon_neon': {
         bucketKey: 'n64-apple_silicon_neon',
         family: 'baseline_reference',
         implementedByWorkerId: 'builder_1',
+        benchmark: {
+          medianNs: 98.28,
+        },
       },
     };
     state.candidates = [
@@ -960,7 +1036,7 @@ describe('buildBaselineRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
       bucketKey: 'n64-apple_silicon_neon',
-      kind: 'scalar_baseline',
+      kind: 'scalar_reference',
       family: 'baseline_reference',
       medianNs: 98,
       status: 'ready',
@@ -968,7 +1044,7 @@ describe('buildBaselineRows', () => {
     });
     expect(rows[1]).toMatchObject({
       bucketKey: 'n64-apple_silicon_neon',
-      kind: 'ne10_reference',
+      kind: 'canonical_baseline',
       family: 'ne10_neon_reference',
       medianNs: 61,
       status: 'ready',
@@ -991,7 +1067,21 @@ describe('buildPlanningTargets', () => {
     state.workersByLane = { explorer: ['explorer_1'], builder: ['builder_1'], auditor: ['auditor_1'] };
     state.cycleIndex = 1;
     state.baselines = {
-      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 166.15 },
+      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 59.23 },
+    };
+    state.baselineSources = {
+      'n64-apple_silicon_neon': {
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'ne10_neon_reference',
+        sourceKind: 'ne10_reference',
+      },
+    };
+    state.baselineArtifacts = {
+      'n64-apple_silicon_neon': {
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'baseline_reference',
+        benchmark: { medianNs: 166.15 },
+      },
     };
     state.candidates = [
       makeCandidate('n64-apple_silicon_neon', {
@@ -1006,10 +1096,11 @@ describe('buildPlanningTargets', () => {
     const targets = buildPlanningTargets(ctx, state, config);
     const explorerMessage = targets.find((target) => target.agentId === 'explorer_1')?.message || '';
 
-    expect(explorerMessage).toContain('Canonical scalar baselines and Ne10 reference headroom by bucket');
+    expect(explorerMessage).toContain('Scalar reference context and canonical incumbent baselines by bucket');
     expect(explorerMessage).toContain('"bucketKey": "n64-apple_silicon_neon"');
     expect(explorerMessage).toContain('"scalarMedianNs": 166');
-    expect(explorerMessage).toContain('"ne10MedianNs": 59');
+    expect(explorerMessage).toContain('"canonicalBaselineMedianNs": 59');
+    expect(explorerMessage).toContain('"canonicalFamily": "ne10_neon_reference"');
     expect(explorerMessage).toContain('This is the first planning cycle after fresh baselines. Be exploit-first, not novelty-first.');
     expect(explorerMessage).toContain('At most one proposal per bucket may be a broad wildcard family.');
     expect(explorerMessage).toContain('Do not spend n64 slots on transpose-heavy matrix families');
@@ -1036,6 +1127,8 @@ describe('builder prompt evidence paths', () => {
     const cycleMessage = buildCycleTargets(ctx, state, config)
       .find((target) => target.agentId === 'builder_1')?.message || '';
 
+    expect(baselineMessage).toContain('Try the Ne10 adapter first for every missing bucket.');
+    expect(baselineMessage).toContain('only if that fails, compile + validate + benchmark a scalar reference fallback');
     expect(baselineMessage).toContain('Do NOT write validation/benchmark evidence to /tmp');
     expect(baselineMessage).toContain('Every reported binaryPath, validationPath, samplePath, and artifactPaths entry must resolve inside the workspace/output directory');
     expect(baselineMessage).toContain('Do NOT invent alternate top-level keys like "candidates", "findings", or "proposals" here.');
@@ -1439,6 +1532,118 @@ describe('plugin onRoomStart', () => {
       fs.rmSync(workspacePath, { recursive: true, force: true });
     }
   });
+
+  it('seeds the previous frontier snapshot and skips baseline fan-out when all buckets are covered', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-room-seed-'));
+    const outputDir = path.join(workspacePath, '.commands', 'fft-autotune');
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(path.join(outputDir, 'frontier-baseline.json'), JSON.stringify({
+      version: 1,
+      updatedAt: '2026-03-24T00:00:00.000Z',
+      targetArch: 'apple_silicon_neon',
+      targetSizes: [64],
+      winners: [{
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'stockham_autosort',
+        treeSpec: 'uniform stockham stages',
+        leafSizes: [4],
+        permutationStrategy: 'autosort',
+        twiddleStrategy: 'stage_local',
+        simdStrategy: 'neon',
+        implementedByWorkerId: 'builder_1',
+        proposedByWorkerId: 'explorer_1',
+        auditedByWorkerIds: ['auditor_1'],
+        benchmark: { medianNs: 77.5, p95Ns: 81.0, cvPct: 2.2 },
+        notes: 'seed winner',
+      }],
+    }, null, 2));
+
+    const plugin = createPlugin();
+    const ctx = makeMockCtx({
+      roomConfig: {
+        workspacePath,
+        outputDir,
+        targetSizes: [64],
+      },
+    });
+
+    try {
+      plugin.init(ctx);
+      const decision = plugin.onRoomStart(ctx);
+      const state = ctx.getState();
+
+      expect(decision?.type).toBe('fan_out');
+      expect(state.phase).toBe(PHASES.SEARCH_PLANNING);
+      expect(state.pendingFanOut).toBe('planning');
+      expect(state.baselines['n64-apple_silicon_neon']?.medianNs).toBeCloseTo(77.5);
+      expect(state.frontierIds).toContain('seed-n64-apple_silicon_neon');
+      expect(state.bestByBucket['n64-apple_silicon_neon']).toBe('seed-n64-apple_silicon_neon');
+    } finally {
+      fs.rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('plugin shutdown', () => {
+  it('persists the current frontier snapshot on manual stop', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-shutdown-save-'));
+    const outputDir = path.join(workspacePath, '.commands', 'fft-autotune');
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const plugin = createPlugin();
+    const ctx = makeMockCtx({
+      roomConfig: {
+        workspacePath,
+        outputDir,
+        targetSizes: [64],
+      },
+    });
+    plugin.init(ctx);
+
+    const state = ctx.getState();
+    state.phase = PHASES.BENCHMARK;
+    state.baselines = {
+      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 100 },
+    };
+    state.baselineSources = {
+      'n64-apple_silicon_neon': {
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'ne10_neon_reference',
+        sourceKind: 'ne10_reference',
+      },
+    };
+    state.candidates = [
+      makeCandidate('n64-apple_silicon_neon', {
+        candidateId: 'c1',
+        status: 'winner',
+        medianNs: 80,
+        speedupVsBaseline: 1.25,
+      }),
+    ];
+    state.frontierIds = ['c1'];
+    state.bestByBucket = { 'n64-apple_silicon_neon': 'c1' };
+    ctx.setState(state);
+
+    try {
+      plugin.shutdown(ctx);
+      const snapshotPath = path.join(outputDir, 'frontier-baseline.json');
+      const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf-8'));
+
+      expect(snapshot.winners).toHaveLength(1);
+      expect(snapshot.winners[0].bucketKey).toBe('n64-apple_silicon_neon');
+      expect(snapshot.winners[0].benchmark.medianNs).toBeCloseTo(80);
+    } finally {
+      fs.rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1446,6 +1651,67 @@ describe('plugin onRoomStart', () => {
 // ---------------------------------------------------------------------------
 
 describe('plugin onFanOutComplete — convergence paths', () => {
+  it('persists the final frontier snapshot when a run stops with a winner', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'fft-frontier-save-'));
+    const outputDir = path.join(workspacePath, '.commands', 'fft-autotune');
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const plugin = createPlugin();
+    const ctx = makeMockCtx({
+      limits: { maxCycles: 1 },
+      roomConfig: {
+        workspacePath,
+        outputDir,
+        targetSizes: [64],
+      },
+    });
+    plugin.init(ctx);
+
+    const state = ctx.getState();
+    state.pendingFanOut = 'audit';
+    state.phase = PHASES.STATIC_AUDIT;
+    state.cycleIndex = 1;
+    state.baselines = {
+      'n64-apple_silicon_neon': { bucketKey: 'n64-apple_silicon_neon', medianNs: 100 },
+    };
+    state.baselineSources = {
+      'n64-apple_silicon_neon': {
+        bucketKey: 'n64-apple_silicon_neon',
+        family: 'ne10_neon_reference',
+        sourceKind: 'ne10_reference',
+      },
+    };
+    state.candidates = [
+      makeCandidate('n64-apple_silicon_neon', {
+        candidateId: 'c1',
+        status: 'winner',
+        medianNs: 80,
+        speedupVsBaseline: 1.25,
+      }),
+    ];
+    state.frontierIds = ['c1'];
+    state.bestByBucket = { 'n64-apple_silicon_neon': 'c1' };
+    ctx.setState(state);
+
+    try {
+      const decision = plugin.onFanOutComplete(ctx, []);
+      const snapshotPath = path.join(outputDir, 'frontier-baseline.json');
+      const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf-8'));
+
+      expect(decision.type).toBe('stop');
+      expect(snapshot.winners).toHaveLength(1);
+      expect(snapshot.winners[0].bucketKey).toBe('n64-apple_silicon_neon');
+      expect(snapshot.winners[0].family).toBe('cooley_tukey_shallow');
+      expect(snapshot.winners[0].benchmark.medianNs).toBeCloseTo(80);
+    } finally {
+      fs.rmSync(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it('routes to schema-repair audit when build output had substance but merged no candidates', () => {
     const plugin = createPlugin();
     const ctx = makeMockCtx();
@@ -1800,6 +2066,7 @@ describe('scaffold', () => {
       expect(adapter).toContain('ne10_get_cached_cfg');
       expect(adapter).toContain('ne10_release_cached_plans');
       expect(adapter).toContain('void dft_1024');
+      expect(adapter).toContain('void dft_16384');
 
       const upstreamCommit = fs.readFileSync(path.join(tmpDir, 'third_party', 'ne10', 'UPSTREAM_COMMIT.txt'), 'utf-8');
       expect(upstreamCommit).toContain('Pinned commit:');

@@ -191,30 +191,36 @@ function buildBaselineRows(state, config, ctx) {
 
   for (const bucketKey of getExpectedBucketKeys(config)) {
     const canonicalBaseline = state.baselines[bucketKey] || null;
-    const baselineArtifact = state.baselineArtifacts[bucketKey] || null;
-    const baselineAttempt = state.baselineAttempts[bucketKey] || null;
+    const canonicalSource = state.baselineSources?.[bucketKey] || null;
+    const scalarReferenceArtifact = state.baselineArtifacts[bucketKey] || null;
     const ne10Reference = latestReferenceCandidate(state, bucketKey);
+    const scalarMedianNs = Number.isFinite(scalarReferenceArtifact?.benchmark?.medianNs)
+      ? scalarReferenceArtifact.benchmark.medianNs
+      : null;
+    const canonicalMedianNs = Number.isFinite(canonicalBaseline?.medianNs)
+      ? canonicalBaseline.medianNs
+      : null;
 
     rows.push({
       bucketKey,
-      kind: 'scalar_baseline',
-      family: baselineArtifact?.family || baselineAttempt?.family || 'baseline_reference',
-      medianNs: Number.isFinite(canonicalBaseline?.medianNs) ? Math.round(canonicalBaseline.medianNs) : '',
+      kind: 'scalar_reference',
+      family: scalarReferenceArtifact?.family || 'baseline_reference',
+      medianNs: Number.isFinite(scalarMedianNs) ? Math.round(scalarMedianNs) : '',
       deltaVsScalarPct: '',
-      status: canonicalBaseline ? 'ready' : summarizeBaselineStatus(baselineAttempt),
-      owner: resolveOwnerName(baselineArtifact?.implementedByWorkerId || baselineAttempt?.implementedByWorkerId, ctx),
+      status: scalarReferenceArtifact ? 'ready' : 'missing',
+      owner: resolveOwnerName(scalarReferenceArtifact?.implementedByWorkerId, ctx),
     });
 
     rows.push({
       bucketKey,
-      kind: 'ne10_reference',
-      family: ne10Reference?.family || 'ne10_neon_reference',
-      medianNs: Number.isFinite(ne10Reference?.benchmark?.medianNs) ? Math.round(ne10Reference.benchmark.medianNs) : '',
-      deltaVsScalarPct: Number.isFinite(ne10Reference?.benchmark?.speedupVsBaseline)
-        ? Number(((ne10Reference.benchmark.speedupVsBaseline - 1) * 100).toFixed(1))
+      kind: 'canonical_baseline',
+      family: canonicalSource?.family || ne10Reference?.family || '',
+      medianNs: Number.isFinite(canonicalMedianNs) ? Math.round(canonicalMedianNs) : '',
+      deltaVsScalarPct: Number.isFinite(canonicalMedianNs) && Number.isFinite(scalarMedianNs) && canonicalMedianNs > 0
+        ? Number((((scalarMedianNs / canonicalMedianNs) - 1) * 100).toFixed(1))
         : '',
-      status: summarizeReferenceStatus(ne10Reference),
-      owner: resolveOwnerName(ne10Reference?.implementedByWorkerId, ctx),
+      status: canonicalBaseline ? 'ready' : summarizeReferenceStatus(ne10Reference),
+      owner: resolveOwnerName(canonicalSource?.implementedByWorkerId || ne10Reference?.implementedByWorkerId, ctx),
     });
   }
 

@@ -73,6 +73,7 @@ export function createInitialState(ctx) {
     candidates: [],
     baselines: {},
     baselineArtifacts: {},
+    baselineSources: {},
     baselineAttempts: {},
     frontierIds: [],
     bestByBucket: {},
