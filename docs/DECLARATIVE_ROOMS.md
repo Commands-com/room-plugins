@@ -432,6 +432,27 @@ cli:
 The field-level schema for `cli` matches the classic-plugin `manifest.json`
 contract in [`CONTRACT.md`](./CONTRACT.md).
 
+### `handoff`
+
+Declarative rooms may also declare pipeline handoff contracts so control-room
+style workflows can validate stage compatibility.
+
+```yaml
+handoff:
+  inputs:
+    - contract: spec_bundle.v1
+      required: false
+      multiple: false
+  outputs:
+    - contract: implementation_bundle.v1
+      default: true
+  defaultApprovalMode: auto
+```
+
+The field-level schema for `handoff` matches the classic-plugin
+`manifest.json` contract in [`CONTRACT.md`](./CONTRACT.md). Contract IDs must
+exist in the host's known handoff-contract registry.
+
 ## Family: `empirical_search`
 
 The `empirical_search` family runtime handles rooms that iteratively explore a search space, benchmark candidates, and converge on winners. Used by FFT autotune, Postgres query optimizer, and Redshift query optimizer.

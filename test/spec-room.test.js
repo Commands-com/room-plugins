@@ -227,6 +227,15 @@ test('spec room runs a write-review-revise-review loop and produces a final spec
     assert.match(savedContent, /## Prerequisites/);
     assert.match(savedContent, /launch child rooms programmatically/);
     assert.match(savedContent, /The parent room status clearly shows which child room is active/);
+
+    const finalReport = plugin.getFinalReport(ctx);
+    assert.ok(finalReport);
+    assert.equal(finalReport.handoffPayloads[0].contract, 'spec_bundle.v1');
+    assert.equal(finalReport.handoffPayloads[0].data.summary.title, 'Control Room v1: Sequential Room Pipelines');
+    assert.match(finalReport.handoffPayloads[0].data.summary.recommendedDirection, /built-in control room/i);
+    assert.equal(finalReport.handoffPayloads[0].data.spec.acceptanceCriteria.length, 2);
+    assert.equal(finalReport.handoffPayloads[0].data.artifacts[0].path, specPath);
+    assert.equal(finalReport.artifacts[0].path, specPath);
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }

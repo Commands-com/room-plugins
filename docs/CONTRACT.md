@@ -75,6 +75,7 @@ function createPlugin() {
     onEvent(ctx, event) { return null; },
     onResume(ctx) { return null; },
     refreshPendingDecision(ctx, pendingDecision) { return pendingDecision; },
+    getFinalReport(ctx) { return null; },
     shutdown(ctx) {},
   };
 }
@@ -98,6 +99,7 @@ Rules:
 - `manifest` must be JSON-serializable.
 - Exported `manifest` must match `manifest.json` exactly.
 - Implement `onRoomStart`, `onTurnResult`, `onFanOutComplete`, and `onEvent` as real functions; missing hooks can trigger hook failures and pause the room.
+- `getFinalReport` is optional.
 - `manifest.orchestratorType` must be unique across all loaded plugins.
 - `manifest.id` must be unique across all loaded plugins.
 
@@ -115,6 +117,7 @@ Allowed top-level keys:
 - `dashboard` (optional object)
 - `limits` (optional object)
 - `endpointConstraints` (optional object)
+- `handoff` (optional object)
 - `display` (optional object)
 - `report` (optional object)
 - `configSchema` (optional object)
@@ -169,6 +172,51 @@ Allowed keys:
 - `perRole` (object)
 
 Current hard enforcement is `requiresLocalParticipant`.
+
+### 4.3.1 `handoff`
+
+Use `handoff` when a room should participate in control-room style pipelines or
+other report-based room chaining.
+
+Allowed keys:
+
+- `inputs` (optional array)
+- `outputs` (optional array)
+- `defaultApprovalMode` (optional string)
+
+`inputs` entries must be objects with:
+
+- `contract` (required non-empty string)
+- `required` (optional boolean)
+- `multiple` (optional boolean)
+
+`outputs` entries must be objects with:
+
+- `contract` (required non-empty string)
+- `default` (optional boolean)
+
+Rules:
+
+- contract identifiers are exact, versioned strings such as `spec_bundle.v1`
+- `inputs` describe what upstream handoff payloads the room can consume
+- `outputs` describe what canonical payloads the room emits for downstream stages
+- `defaultApprovalMode`, when present, must be a non-empty string; built-in rooms
+  currently use values such as `auto`
+- contract IDs must be known to the host registry or manifest validation will reject them
+
+Example:
+
+```json
+"handoff": {
+  "inputs": [
+    { "contract": "prototype_bundle.v1", "required": false, "multiple": false }
+  ],
+  "outputs": [
+    { "contract": "spec_bundle.v1", "default": true }
+  ],
+  "defaultApprovalMode": "auto"
+}
+```
 
 ### 4.4 `dashboard`
 
@@ -545,6 +593,51 @@ Use this to regenerate message text so approval executes fresh content.
 ### 6.8 `shutdown(ctx)`
 
 Called on room stop for cleanup. Errors are ignored.
+
+### 6.9 `getFinalReport(ctx)`
+
+Optional hook called when the host finalizes the room report.
+
+Return `null` to use only the host-provided base report, or return an object to
+merge additional report fields into the final payload.
+
+Common fields:
+
+- `summary`
+- `metrics`
+- `artifacts`
+- `handoffPayloads`
+
+Example:
+
+```js
+getFinalReport(ctx) {
+  return {
+    summary: {
+      title: 'Prototype Bundle Ready',
+      highlights: ['OpenAI is currently ranked #1'],
+      outcome: 'prototype_bundle_ready',
+    },
+    artifacts: [
+      { type: 'html', path: '/abs/path/proto/openai/index.html', label: 'Main prototype', primary: true },
+    ],
+    handoffPayloads: [
+      {
+        contract: 'prototype_bundle.v1',
+        data: {
+          summary: { title: 'Saved Rooms', oneLiner: '...', recommendedDirection: '...' },
+        },
+      },
+    ],
+  };
+}
+```
+
+Notes:
+
+- `artifacts` become `reportPayload.report.artifacts`
+- `handoffPayloads` become `reportPayload.report.handoffPayloads`
+- control-room style orchestration reads downstream payloads from `report.handoffPayloads`
 
 ## 7. Orchestrator Context (`ctx`)
 

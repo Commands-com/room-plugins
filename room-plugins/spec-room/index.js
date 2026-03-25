@@ -698,6 +698,59 @@ function buildArtifactMetric(state) {
   };
 }
 
+function buildSpecBundle(state) {
+  const spec = state.finalSpec || state.draftSpec;
+  if (!spec) return null;
+
+  const markdown = state.currentSpecMarkdown || renderSpecMarkdown(spec, state);
+  const primaryPath = state.exportedSpecPath || state.specFilePath || '';
+  const recommendedDirection = spec.proposal?.[0]
+    || spec.implementationPlan?.[0]
+    || `Use ${spec.title} as the canonical ${titleCase(state.config.deliverableType)}.`;
+
+  return {
+    contract: 'spec_bundle.v1',
+    data: {
+      summary: {
+        title: spec.title,
+        oneLiner: spec.summary,
+        recommendedDirection: safeTrim(recommendedDirection, SPEC_TEXT_LIMITS.shortItem),
+      },
+      artifacts: primaryPath
+        ? [{
+            kind: 'markdown',
+            path: primaryPath,
+            label: 'Canonical spec',
+            primary: true,
+          }]
+        : [],
+      spec: {
+        title: spec.title,
+        markdown,
+        problem: spec.problem,
+        goals: spec.goals || [],
+        nonGoals: spec.nonGoals || [],
+        assumptions: spec.assumptions || [],
+        prerequisites: spec.prerequisites || [],
+        proposal: spec.proposal || [],
+        acceptanceCriteria: spec.acceptanceCriteria || [],
+        implementationPlan: spec.implementationPlan || [],
+        risks: spec.risks || [],
+        openQuestions: spec.openQuestions || [],
+      },
+      deliverableType: state.config.deliverableType,
+      audience: state.config.audience,
+      detailLevel: state.config.detailLevel,
+      provenance: {
+        roomType: 'spec_room',
+        generatedAt: new Date().toISOString(),
+        specFilePath: primaryPath || null,
+        passCount: state.passCount,
+      },
+    },
+  };
+}
+
 function emitMetrics(ctx, state) {
   const activeSpec = state.finalSpec || state.draftSpec;
   const completedContributors = new Set(
@@ -1176,6 +1229,41 @@ function createPlugin() {
 
       const targets = buildPendingTargetsForPhase(state, state.phase);
       return targets.length > 0 ? { type: 'fan_out', targets } : pendingDecision;
+    },
+
+    getFinalReport(ctx) {
+      const state = ctx.getState();
+      if (!state) return null;
+
+      const bundle = buildSpecBundle(state);
+      if (!bundle) return null;
+
+      return {
+        summary: {
+          title: bundle.data.summary.title,
+          highlights: [
+            bundle.data.summary.oneLiner,
+            bundle.data.summary.recommendedDirection,
+            bundle.data.spec.acceptanceCriteria?.length
+              ? `${bundle.data.spec.acceptanceCriteria.length} acceptance criteria defined.`
+              : null,
+          ].filter(Boolean).slice(0, 6),
+          outcome: state.phase === PHASES.COMPLETE ? 'spec_bundle_ready' : 'spec_bundle_partial',
+        },
+        metrics: {
+          cycles: state.passCount,
+          turns: state.rounds.length,
+          failures: 0,
+          tokensUsed: null,
+        },
+        artifacts: bundle.data.artifacts.map((artifact) => ({
+          type: artifact.kind || 'file',
+          path: artifact.path,
+          label: artifact.label,
+          ...(artifact.primary ? { primary: true } : {}),
+        })),
+        handoffPayloads: [bundle],
+      };
     },
 
     shutdown() {

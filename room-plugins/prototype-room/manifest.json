@@ -1,0 +1,232 @@
+{
+  "id": "prototype_room",
+  "name": "Prototype Room",
+  "version": "1.0.0",
+  "orchestratorType": "prototype_room",
+  "description": "Have each AI build its own prototype in a dedicated folder, review peers, synthesize the feedback, and iterate through multiple improvement cycles",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["prototyper"],
+    "optional": [],
+    "minCount": {
+      "prototyper": 2
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 2, "min": 2, "max": 5 },
+    "maxTurns": { "default": 24, "min": 3, "max": 100 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 90000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "prototyper",
+    "turnFloorFormula": "1 + N"
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "prototypePhase",
+        "label": "Phase",
+        "phases": ["build", "review", "synthesize", "improve", "complete"],
+        "phaseLabels": {
+          "build": "Build",
+          "review": "Review",
+          "synthesize": "Synthesize",
+          "improve": "Improve",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "progress",
+        "key": "prototypeProgress",
+        "label": "Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "counter-group",
+        "key": "prototypeCounts",
+        "label": "Prototype",
+        "layout": "row",
+        "counters": [
+          { "key": "prototypes", "label": "Prototypes", "color": "blue" },
+          { "key": "files", "label": "Files", "color": "green" },
+          { "key": "reviews", "label": "Reviews", "color": "orange" },
+          { "key": "changes", "label": "Changes", "color": "yellow" }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "contributorStatus",
+        "label": "Contributors"
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 90 },
+          { "key": "contributor", "label": "Contributor", "width": 140 },
+          { "key": "prototype", "label": "Prototype", "width": 120 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 360 }
+        ]
+      },
+      {
+        "type": "table",
+        "key": "leaderboardTable",
+        "label": "Leaderboard",
+        "sortable": true,
+        "columns": [
+          { "key": "rank", "label": "Rank", "width": 80 },
+          { "key": "prototype", "label": "Prototype", "width": 140 },
+          { "key": "score", "label": "Avg Score", "width": 110 },
+          { "key": "reviews", "label": "Reviews", "width": 90 },
+          { "key": "mustChange", "label": "Must Change", "width": 120 },
+          { "key": "risks", "label": "Risks", "width": 80 },
+          { "key": "status", "label": "Status", "width": 220 }
+        ]
+      },
+      {
+        "type": "conversation-feed",
+        "key": "roomFeed",
+        "label": "Room Feed"
+      },
+      {
+        "type": "code-blocks",
+        "key": "prototypeArtifacts",
+        "label": "Prototypes",
+        "language": "markdown"
+      }
+    ]
+  },
+  "objective": {
+    "required": true,
+    "placeholder": "Describe the product, feature, or experience each AI should prototype"
+  },
+  "handoff": {
+    "inputs": [],
+    "outputs": [
+      { "contract": "prototype_bundle.v1", "default": true }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Prototype Room",
+    "typeTag": "PROTO",
+    "cycleNoun": "Cycle",
+    "reportTitle": "Prototype Room Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Scanning prototype folders",
+      "fanOut": "Running the current prototype pass",
+      "singleTurn": "Unexpected single-turn flow",
+      "synthesis": "Synthesizing cross-review feedback",
+      "planning": "Preparing the next cycle"
+    },
+    "phaseActivityMessages": {
+      "build": "Each participant is building a prototype",
+      "review": "Each participant is reviewing peer prototypes",
+      "synthesize": "The room is synthesizing review feedback and rankings",
+      "improve": "Each participant is improving its own prototype",
+      "complete": "Prototype room complete"
+    },
+    "defaultRoster": [
+      { "role": "prototyper", "displayName": "OpenAI" },
+      { "role": "prototyper", "displayName": "Claude" },
+      { "role": "prototyper", "displayName": "Gemini" }
+    ],
+    "defaultAddRole": "prototyper"
+  },
+  "report": {
+    "summaryMetrics": ["prototypeCounts"],
+    "table": {
+      "metricKey": "contributionTable",
+      "columns": [
+        { "key": "phase", "label": "Phase", "width": 90 },
+        { "key": "contributor", "label": "Contributor", "width": 140 },
+        { "key": "prototype", "label": "Prototype", "width": 120 },
+        { "key": "status", "label": "Status", "width": 110 },
+        { "key": "summary", "label": "Summary", "width": 360 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "finalArtifacts", "label": "Prototype Snapshots", "language": "markdown" }
+    ]
+  },
+  "cli": {
+    "command": "prototype-room",
+    "description": "Have each AI build, review, and iteratively improve its own prototype in a shared output folder",
+    "positionalArgs": [
+      {
+        "name": "idea",
+        "type": "string",
+        "required": true,
+        "description": "Objective each AI should prototype",
+        "mapTo": "objective"
+      }
+    ],
+    "startParams": [
+      {
+        "name": "output-dir",
+        "type": "directory",
+        "required": true,
+        "description": "Directory where each participant gets its own prototype folder",
+        "mapTo": "roomConfig.outputDir"
+      },
+      {
+        "name": "readme-file-name",
+        "type": "string",
+        "required": false,
+        "default": "README.md",
+        "description": "Required summary file each participant should keep updated in its prototype folder",
+        "mapTo": "roomConfig.readmeFileName"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "prototypePhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      },
+      {
+        "key": "prototypeProgress",
+        "label": "Progress",
+        "format": "progress"
+      },
+      {
+        "key": "prototypeCounts",
+        "label": "Prototype",
+        "format": "counter-group"
+      }
+    ],
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (cycle {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "skill": {
+      "name": "prototype-room",
+      "description": "Run a side-by-side prototype bakeoff where each AI builds, reviews, and iteratively improves its own version",
+      "defaultObjective": "Build multiple prototypes of the same objective, review them, and iterate using peer feedback",
+      "contextGathering": {
+        "requiredInputs": ["idea"],
+        "optionalInputs": []
+      }
+    }
+  },
+  "roomConfigSchema": {
+    "outputDir": {
+      "type": "directory",
+      "label": "Output Directory",
+      "required": true,
+      "description": "Folder where the room should create one prototype folder per participant."
+    },
+    "readmeFileName": {
+      "type": "string",
+      "label": "Summary File Name",
+      "default": "README.md",
+      "description": "Markdown file each participant should keep updated in its own prototype folder."
+    }
+  }
+}

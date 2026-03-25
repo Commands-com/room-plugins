@@ -93,6 +93,15 @@
     "required": true,
     "placeholder": "Describe the feature, workflow, or problem to turn into a spec"
   },
+  "handoff": {
+    "inputs": [
+      { "contract": "prototype_bundle.v1", "required": false, "multiple": false }
+    ],
+    "outputs": [
+      { "contract": "spec_bundle.v1", "default": true }
+    ],
+    "defaultApprovalMode": "auto"
+  },
   "display": {
     "typeLabel": "Spec Room",
     "typeTag": "SPEC",
