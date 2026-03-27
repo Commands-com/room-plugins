@@ -1,0 +1,212 @@
+{
+  "id": "explore_room",
+  "name": "Explore Room",
+  "version": "1.0.0",
+  "orchestratorType": "explore_room",
+  "description": "Take a broad domain or specific concept seed, converge on the strongest concept direction, and emit a concept bundle for downstream prototyping",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["explorer"],
+    "optional": [],
+    "minCount": {
+      "explorer": 2
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 2, "min": 1, "max": 4 },
+    "maxTurns": { "default": 12, "min": 3, "max": 100 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 90000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "explorer",
+    "turnFloorFormula": "1 + N"
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "explorePhase",
+        "label": "Phase",
+        "phases": ["explore", "review", "synthesize", "refine", "complete"],
+        "phaseLabels": {
+          "explore": "Explore",
+          "review": "Review",
+          "synthesize": "Synthesize",
+          "refine": "Refine",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "counter-group",
+        "key": "conceptCounts",
+        "label": "Concepts",
+        "layout": "row",
+        "counters": [
+          { "key": "concepts", "label": "Concepts", "color": "blue" },
+          { "key": "reviews", "label": "Reviews", "color": "green" },
+          { "key": "flows", "label": "Flows", "color": "orange" },
+          { "key": "boundaries", "label": "Boundaries", "color": "yellow" }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "contributorStatus",
+        "label": "Contributors"
+      },
+      {
+        "type": "table",
+        "key": "leaderboardTable",
+        "label": "Leaderboard",
+        "sortable": true,
+        "columns": [
+          { "key": "rank", "label": "Rank", "width": 80 },
+          { "key": "concept", "label": "Concept", "width": 180 },
+          { "key": "score", "label": "Avg Score", "width": 110 },
+          { "key": "reviews", "label": "Reviews", "width": 90 },
+          { "key": "mustChange", "label": "Must Change", "width": 120 },
+          { "key": "risks", "label": "Risks", "width": 80 },
+          { "key": "status", "label": "Status", "width": 220 }
+        ]
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 100 },
+          { "key": "contributor", "label": "Contributor", "width": 160 },
+          { "key": "concept", "label": "Concept", "width": 180 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 360 }
+        ]
+      },
+      {
+        "type": "conversation-feed",
+        "key": "roomFeed",
+        "label": "Room Feed"
+      },
+      {
+        "type": "code-blocks",
+        "key": "conceptArtifacts",
+        "label": "Concepts",
+        "language": "markdown"
+      }
+    ]
+  },
+  "objective": {
+    "required": true,
+    "placeholder": "Describe the domain, business space, or specific product concept to explore"
+  },
+  "handoff": {
+    "inputs": [],
+    "outputs": [
+      { "contract": "concept_bundle.v1", "default": true }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Explore Room",
+    "typeTag": "EXPLORE",
+    "cycleNoun": "Cycle",
+    "reportTitle": "Explore Room Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Exploring concept directions",
+      "fanOut": "Running the current explore pass",
+      "singleTurn": "Unexpected single-turn flow",
+      "synthesis": "Ranking and synthesizing concepts",
+      "planning": "Preparing the next phase"
+    },
+    "phaseActivityMessages": {
+      "explore": "Each participant is proposing a concept direction",
+      "review": "Each participant is reviewing peer concepts",
+      "synthesize": "The room is ranking and selecting the strongest concept",
+      "refine": "Each participant is refining the selected concept",
+      "complete": "Explore room complete"
+    },
+    "defaultRoster": [
+      { "role": "explorer", "displayName": "OpenAI" },
+      { "role": "explorer", "displayName": "Claude" },
+      { "role": "explorer", "displayName": "Gemini" }
+    ],
+    "defaultAddRole": "explorer"
+  },
+  "report": {
+    "summaryMetrics": ["conceptCounts"],
+    "table": {
+      "metricKey": "leaderboardTable",
+      "columns": [
+        { "key": "rank", "label": "Rank", "width": 80 },
+        { "key": "concept", "label": "Concept", "width": 180 },
+        { "key": "score", "label": "Avg Score", "width": 110 },
+        { "key": "reviews", "label": "Reviews", "width": 90 },
+        { "key": "mustChange", "label": "Must Change", "width": 120 },
+        { "key": "risks", "label": "Risks", "width": 80 },
+        { "key": "status", "label": "Status", "width": 220 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "finalArtifacts", "label": "Concept Briefs", "language": "markdown" }
+    ]
+  },
+  "cli": {
+    "command": "explore-room",
+    "description": "Converge on the strongest concept direction from a domain or a specific seeded idea",
+    "positionalArgs": [
+      {
+        "name": "seed",
+        "type": "string",
+        "required": true,
+        "description": "Domain, business space, or specific seeded concept to explore",
+        "mapTo": "objective"
+      }
+    ],
+    "startParams": [
+      {
+        "name": "seed-mode",
+        "type": "enum",
+        "required": false,
+        "default": "Auto",
+        "choices": ["Auto", "Domain Search", "Refine Seeded Concept"],
+        "description": "Whether the room should search for a concept or refine an already-specific seed",
+        "mapTo": "roomConfig.seedMode"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "explorePhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      },
+      {
+        "key": "conceptCounts",
+        "label": "Concepts",
+        "format": "counter-group"
+      }
+    ],
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "skill": {
+      "name": "explore-room",
+      "description": "Explore and rank the strongest concept direction before prototyping",
+      "defaultObjective": "Find the strongest concept direction for the seeded domain or refine a specific seeded concept into a clear prototype-ready direction",
+      "contextGathering": {
+        "requiredInputs": ["seed"],
+        "optionalInputs": []
+      }
+    }
+  },
+  "roomConfigSchema": {
+    "seedMode": {
+      "type": "enum",
+      "label": "Seed Mode",
+      "options": ["Auto", "Domain Search", "Refine Seeded Concept"],
+      "default": "Auto",
+      "description": "Choose whether the room should search broadly or refine an already-specific concept seed."
+    }
+  }
+}

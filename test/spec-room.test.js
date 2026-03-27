@@ -27,6 +27,7 @@ function makeMockCtx(overrides = {}) {
       knownConstraints: ['first pass only'],
       ...(overrides.roomConfig || {}),
     },
+    handoffContext: overrides.handoffContext || null,
     limits: {
       llmTimeoutMs: 1000,
       maxCycles: 4,
@@ -65,6 +66,49 @@ async function writeCanonicalSpec(ctx, markdown) {
   const state = ctx.getState();
   await writeFile(state.specFilePath, markdown, 'utf8');
   return state.specFilePath;
+}
+
+function buildPrototypeBundle() {
+  return {
+    summary: {
+      title: 'Prototype Bundle Ready',
+      oneLiner: 'Claude direction is the clearest current landing page concept.',
+      recommendedDirection: 'Carry Claude Direction into the next stage.',
+    },
+    selection: {
+      mode: 'human_gate',
+      prototypeId: 'claude',
+      prototypeTitle: 'Claude Direction',
+    },
+    prototypes: [
+      {
+        id: 'claude',
+        title: 'Claude Direction',
+        directory: '/tmp/prototypes/claude',
+        summaryPath: '/tmp/prototypes/claude/README.md',
+        status: 'ready',
+        summary: 'Editorial, high-trust direction.',
+        artifactPaths: ['/tmp/prototypes/claude/index.html'],
+        entryHtmlPath: '/tmp/prototypes/claude/index.html',
+        previewImagePath: '/tmp/prototypes/claude/preview.png',
+      },
+      {
+        id: 'gemini',
+        title: 'Gemini Direction',
+        directory: '/tmp/prototypes/gemini',
+        summaryPath: '/tmp/prototypes/gemini/README.md',
+        status: 'ready',
+        summary: 'Sharper developer-tool direction.',
+        artifactPaths: ['/tmp/prototypes/gemini/index.html'],
+        entryHtmlPath: '/tmp/prototypes/gemini/index.html',
+        previewImagePath: '',
+      },
+    ],
+    leaderboard: [
+      { rank: 1, prototypeId: 'claude', prototypeTitle: 'Claude Direction', averageScore: 8.8, reviewCount: 2 },
+      { rank: 2, prototypeId: 'gemini', prototypeTitle: 'Gemini Direction', averageScore: 8.1, reviewCount: 2 },
+    ],
+  };
 }
 
 function buildSpecMarkdown({
@@ -213,7 +257,7 @@ test('spec room runs a write-review-revise-review loop and produces a final spec
       },
     ]);
 
-    assert.deepEqual(stopDecision, { type: 'stop', reason: 'spec_complete' });
+    assert.deepEqual(stopDecision, { type: 'stop', reason: 'convergence' });
 
     const finalState = ctx.getState();
     assert.equal(finalState.phase, 'complete');
@@ -236,6 +280,157 @@ test('spec room runs a write-review-revise-review loop and produces a final spec
     assert.equal(finalReport.handoffPayloads[0].data.spec.acceptanceCriteria.length, 2);
     assert.equal(finalReport.handoffPayloads[0].data.artifacts[0].path, specPath);
     assert.equal(finalReport.artifacts[0].path, specPath);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('spec room carries selected prototype handoff context into the authoring prompt', async () => {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), 'spec-room-prototype-handoff-'));
+
+  try {
+    const ctx = makeMockCtx({
+      roomConfig: {
+        outputDir,
+        fileName: 'control-room-v1',
+      },
+      handoffContext: {
+        payloads: [
+          { contract: 'prototype_bundle.v1', data: buildPrototypeBundle() },
+        ],
+      },
+    });
+    const plugin = createPlugin();
+
+    plugin.init(ctx);
+    const initialState = ctx.getState();
+    assert.equal(initialState.prototypeContext.selectedPrototype.id, 'claude');
+    assert.match(initialState.feedEntries.at(-1).content, /Selected inbound prototype: Claude Direction \(claude\)/);
+
+    const startDecision = plugin.onRoomStart(ctx);
+    assert.equal(startDecision.type, 'fan_out');
+    assert.match(startDecision.targets[0].message, /Selected prototype: Claude Direction \(claude\)/);
+    assert.match(startDecision.targets[0].message, /HTML entry point: \/tmp\/prototypes\/claude\/index\.html/);
+    assert.match(startDecision.targets[0].message, /Carry-forward guidance: Carry Claude Direction into the next stage\./);
+    assert.match(startDecision.targets[0].message, /Use the prototype to inform the spec, not to define the implementation blindly\./);
+    assert.match(startDecision.targets[0].message, /Define the non-mock functionality the shipped system must deliver\./);
+    assert.match(startDecision.targets[0].message, /3-5 cycles for a small\/single-flow build/i);
+    assert.match(startDecision.targets[0].message, /10-14 cycles for a larger multi-flow build/i);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('spec room reinforces prototype influence boundaries in the normalized final spec', async () => {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), 'spec-room-prototype-boundaries-'));
+
+  try {
+    const ctx = makeMockCtx({
+      roomConfig: {
+        outputDir,
+        fileName: 'control-room-v1',
+      },
+      handoffContext: {
+        payloads: [
+          { contract: 'prototype_bundle.v1', data: buildPrototypeBundle() },
+        ],
+      },
+    });
+    const plugin = createPlugin();
+
+    plugin.init(ctx);
+    plugin.onRoomStart(ctx);
+
+    await writeCanonicalSpec(ctx, buildSpecMarkdown({
+      proposal: [
+        'Add a built-in control room that launches validated child rooms and passes report-based handoffs between them.',
+      ],
+      acceptanceCriteria: [
+        'A control room can launch at least two sequential child rooms and halt cleanly on failure.',
+      ],
+    }));
+
+    await plugin.onFanOutComplete(ctx, [
+      {
+        agentId: 'implementer_1',
+        response: '## Result\n- Wrote the initial spec to disk.\n## File Path\n- control-room-v1.md\n## Highlights\n- Added a concrete v1 scope.\n## Risks\n- Report handoffs may be underspecified.\n## Open Questions\n- Should failure always halt the pipeline?',
+      },
+    ]);
+
+    const state = ctx.getState();
+    assert.ok(state.draftSpec.proposal.some((item) => /prototype/i.test(item) && /implementation boundaries/i.test(item)));
+    assert.ok(state.draftSpec.acceptanceCriteria.some((item) => /prototype/i.test(item) && /implementation artifact/i.test(item)));
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('spec room emits implementation cycle guidance in the spec bundle', async () => {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), 'spec-room-implementation-hints-'));
+
+  try {
+    const ctx = makeMockCtx({
+      roomConfig: {
+        outputDir,
+        fileName: 'full-saas-v1',
+      },
+      objective: 'Build a credible SaaS product with auth, billing, dashboard workflows, and persistent user data.',
+    });
+    const plugin = createPlugin();
+
+    plugin.init(ctx);
+    plugin.onRoomStart(ctx);
+
+    await writeCanonicalSpec(ctx, buildSpecMarkdown({
+      title: 'Full SaaS v1',
+      summary: 'Define the first real version of a SaaS business with real authentication, billing, and dashboard flows.',
+      goals: [
+        'Launch a public marketing site and signed-in product shell.',
+        'Support account creation, login, and role-aware access.',
+        'Persist user data and workspace state.',
+      ],
+      prerequisites: [
+        'Add backend persistence for accounts, workspaces, and product data.',
+        'Integrate billing and subscription state into the account model.',
+      ],
+      proposal: [
+        'Build a real account system with signup, login, and role-aware dashboard routing.',
+        'Implement persistent workspace state and API-backed product flows rather than frontend-only mock data.',
+        'Integrate subscription billing and settings management into the core product.',
+      ],
+      acceptanceCriteria: [
+        'A user can sign up, log in, and reach an authenticated dashboard.',
+        'Workspace and product data persist between sessions.',
+        'Billing or subscription state is visible in the account settings flow.',
+        'The main dashboard workflow performs real non-mock product actions.',
+      ],
+      implementationPlan: [
+        'Create auth flows and session handling.',
+        'Add database schema and persistence layer.',
+        'Implement API endpoints for core product actions.',
+        'Build the authenticated dashboard and settings views.',
+        'Integrate billing/subscription management.',
+      ],
+      risks: [
+        'Billing integration can expand the implementation surface quickly.',
+        'Auth and data migration errors would block the whole product core.',
+      ],
+    }));
+
+    await plugin.onFanOutComplete(ctx, [
+      {
+        agentId: 'implementer_1',
+        response: '## Result\n- Wrote the initial spec to disk.\n## File Path\n- full-saas-v1.md\n## Highlights\n- Covers auth, billing, persistence, and dashboard flows.\n## Risks\n- Billing complexity remains significant.\n## Open Questions\n- None.',
+      },
+    ]);
+
+    const report = plugin.getFinalReport(ctx);
+    assert.ok(report?.handoffPayloads?.[0]);
+    assert.equal(report.handoffPayloads[0].contract, 'spec_bundle.v1');
+    assert.equal(report.handoffPayloads[0].data.implementationHints.complexity, 'extensive');
+    assert.equal(report.handoffPayloads[0].data.implementationHints.recommendedMaxCycles, 13);
+    assert.ok(report.handoffPayloads[0].data.implementationHints.rationale.some((item) => /auth/i.test(item)));
+    assert.ok(report.handoffPayloads[0].data.implementationHints.rationale.some((item) => /persistence|data-layer/i.test(item)));
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
@@ -279,7 +474,7 @@ test('spec room stops with the latest authored spec when the pass limit is reach
       { agentId: 'implementer_1', response: '## Result\n- Revised the file with the requested changes.\n## File Path\n- control-room-v1.md\n## Applied Changes\n- Added halt behavior and status.\n## Deferred\n- None.\n## Open Questions\n- None.' },
     ]);
 
-    assert.deepEqual(stopDecision, { type: 'stop', reason: 'max_cycles_reached' });
+    assert.deepEqual(stopDecision, { type: 'stop', reason: 'cycle_limit' });
 
     const finalState = ctx.getState();
     assert.equal(finalState.phase, 'complete');
@@ -354,7 +549,7 @@ test('spec room gives the implementer the final pass when review hits the cycle 
       { agentId: 'implementer_1', response: '## Result\n- Applied the final requested review changes.\n## File Path\n- control-room-v1.md\n## Applied Changes\n- Tightened parent status and child summary wording.\n## Deferred\n- None.\n## Open Questions\n- None.' },
     ]);
 
-    assert.deepEqual(stopDecision, { type: 'stop', reason: 'max_cycles_reached' });
+    assert.deepEqual(stopDecision, { type: 'stop', reason: 'cycle_limit' });
     assert.equal(ctx.getState().finalSpec.title, 'Control Room v1: Final Implementer Pass');
   } finally {
     await rm(outputDir, { recursive: true, force: true });
@@ -527,7 +722,7 @@ test('spec room preserves longer authored sections without clipping them mid-tho
       { agentId: 'critic_1', response: '## Verdict\napprove\n## Keep\n- The long sections remain readable.\n## Must Change\n## Nice To Have\n## Risks\n- None.\n## Open Questions\n- None.' },
     ]);
 
-    assert.deepEqual(stopDecision, { type: 'stop', reason: 'spec_complete' });
+    assert.deepEqual(stopDecision, { type: 'stop', reason: 'convergence' });
 
     const state = ctx.getState();
     assert.ok(state.finalSpec.summary.includes('Summary sentence 18 explains how the control room carries staged output forward'));

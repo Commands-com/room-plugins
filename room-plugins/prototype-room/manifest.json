@@ -13,7 +13,7 @@
     }
   },
   "limits": {
-    "maxCycles": { "default": 2, "min": 2, "max": 5 },
+    "maxCycles": { "default": 2, "min": 1, "max": 5 },
     "maxTurns": { "default": 24, "min": 3, "max": 100 },
     "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
     "maxFailures": { "default": 5, "min": 1, "max": 20 },
@@ -63,19 +63,6 @@
       },
       {
         "type": "table",
-        "key": "contributionTable",
-        "label": "Contributions",
-        "sortable": true,
-        "columns": [
-          { "key": "phase", "label": "Phase", "width": 90 },
-          { "key": "contributor", "label": "Contributor", "width": 140 },
-          { "key": "prototype", "label": "Prototype", "width": 120 },
-          { "key": "status", "label": "Status", "width": 110 },
-          { "key": "summary", "label": "Summary", "width": 360 }
-        ]
-      },
-      {
-        "type": "table",
         "key": "leaderboardTable",
         "label": "Leaderboard",
         "sortable": true,
@@ -87,6 +74,19 @@
           { "key": "mustChange", "label": "Must Change", "width": 120 },
           { "key": "risks", "label": "Risks", "width": 80 },
           { "key": "status", "label": "Status", "width": 220 }
+        ]
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 90 },
+          { "key": "contributor", "label": "Contributor", "width": 140 },
+          { "key": "prototype", "label": "Prototype", "width": 120 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 360 }
         ]
       },
       {
@@ -107,7 +107,9 @@
     "placeholder": "Describe the product, feature, or experience each AI should prototype"
   },
   "handoff": {
-    "inputs": [],
+    "inputs": [
+      { "contract": "concept_bundle.v1", "required": false, "multiple": false }
+    ],
     "outputs": [
       { "contract": "prototype_bundle.v1", "default": true }
     ],

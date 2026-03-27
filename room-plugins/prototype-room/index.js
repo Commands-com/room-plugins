@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +33,9 @@ const NONE_KEYS = new Set(['none', 'none yet', 'n a', 'na', 'nothing', 'nope']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const HTML_EXTENSIONS = new Set(['.html', '.htm']);
 const TEXT_ARTIFACT_EXTENSIONS = new Set(['.md', '.txt', '.json']);
+const GENERATED_PREVIEW_DIR = '.commands-preview';
+const QUICKLOOK_PREVIEW_SIZE = 1200;
+const QUICKLOOK_TIMEOUT_MS = 5000;
 
 function safeTrim(value, maxLen = 2000) {
   return typeof value === 'string' ? value.trim().slice(0, maxLen) : '';
@@ -98,23 +102,48 @@ function sanitizeFileName(value, fallback = 'README.md') {
 }
 
 function buildSummarySeed(state, participant) {
+  const conceptLines = state.conceptContext?.selectedConcept
+    ? [
+        '## Seed Concept',
+        `- ${state.conceptContext.selectedConcept.title}`,
+        state.conceptContext.selectedConcept.oneLiner ? `- ${state.conceptContext.selectedConcept.oneLiner}` : '',
+        state.conceptContext.selectedConcept.requiredUserFlows?.length
+          ? `- Required user flows: ${state.conceptContext.selectedConcept.requiredUserFlows.join(' | ')}`
+          : '',
+        state.conceptContext.selectedConcept.prototypeFocus?.length
+          ? `- Prototype focus: ${state.conceptContext.selectedConcept.prototypeFocus.join(' | ')}`
+          : '',
+        state.conceptContext.selectedConcept.nonMockFunctionality?.length
+          ? `- Non-mock functionality: ${state.conceptContext.selectedConcept.nonMockFunctionality.join(' | ')}`
+          : '',
+        state.conceptContext.selectedConcept.implementationBoundaries?.length
+          ? `- Implementation boundaries: ${state.conceptContext.selectedConcept.implementationBoundaries.join(' | ')}`
+          : '',
+        '',
+      ].filter(Boolean)
+    : [];
+
   return [
     `# ${participant.prototypeLabel}`,
     '',
     '## Objective',
     state.objective,
     '',
+    ...conceptLines,
     '## Prototype Thesis',
     '- Describe the distinct direction this prototype is taking.',
     '',
     '## What I Built',
     '- Summarize the current prototype.',
     '',
+    '## Entry Point',
+    '- Point to the one canonical HTML entry for this prototype, ideally `index.html`.',
+    '',
     '## Key Files',
     '- List the most important files in this folder.',
     '',
     '## How To Open Or Inspect',
-    '- Explain how someone should explore this prototype.',
+    '- Explain how someone should explore this prototype, starting from the canonical HTML entry point.',
     '',
     '## Strengths',
     '- Call out what this version is trying to do especially well.',
@@ -165,6 +194,32 @@ function parseMarkdownSections(markdown) {
   }
 
   return sections;
+}
+
+function normalizePrototypePathValue(value, prototypeDir) {
+  const cleaned = safeTrim(
+    String(value || '')
+      .replace(/^[-*+]\s+/, '')
+      .replace(/^`+|`+$/g, ''),
+    4000,
+  );
+  if (!cleaned) return '';
+  if (path.isAbsolute(cleaned)) return cleaned;
+  return path.resolve(prototypeDir, cleaned);
+}
+
+function findExplicitEntryHtmlPath(readmeContent, prototypeDir) {
+  const sections = parseMarkdownSections(readmeContent);
+  const entryLines = Array.isArray(sections.get('entry point')) ? sections.get('entry point') : [];
+
+  for (const line of entryLines) {
+    const candidate = normalizePrototypePathValue(line, prototypeDir);
+    if (!candidate) continue;
+    if (!HTML_EXTENSIONS.has(path.extname(candidate).toLowerCase())) continue;
+    if (isReadableFile(candidate)) return candidate;
+  }
+
+  return '';
 }
 
 function getMarkdownTitle(markdown, fallback = 'Prototype') {
@@ -223,11 +278,114 @@ function inferArtifactKind(filePath) {
   return 'file';
 }
 
+function findPreviewImagePath(filePaths) {
+  return Array.isArray(filePaths)
+    ? filePaths.find((filePath) => IMAGE_EXTENSIONS.has(path.extname(String(filePath || '')).toLowerCase())) || ''
+    : '';
+}
+
+function findEntryHtmlPath(filePaths) {
+  const htmlFiles = Array.isArray(filePaths)
+    ? filePaths.filter((filePath) => HTML_EXTENSIONS.has(path.extname(String(filePath || '')).toLowerCase()))
+    : [];
+  const indexPath = htmlFiles.find((filePath) => /(^|[\/])index\.html?$/i.test(String(filePath || '')));
+  return indexPath || htmlFiles[0] || '';
+}
+
+function isReadableFile(filePath) {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function ensureGeneratedPreviewImage(outputDir, prototypeKey, entryHtmlPath) {
+  const normalizedOutputDir = safeTrim(outputDir, 4000);
+  const normalizedPrototypeKey = safeTrim(prototypeKey, 120);
+  const normalizedEntryHtmlPath = safeTrim(entryHtmlPath, 4000);
+  if (process.platform !== 'darwin' || !normalizedOutputDir || !normalizedPrototypeKey || !normalizedEntryHtmlPath) {
+    return '';
+  }
+  if (!isReadableFile(normalizedEntryHtmlPath)) return '';
+
+  const previewDir = path.join(normalizedOutputDir, GENERATED_PREVIEW_DIR, normalizedPrototypeKey);
+  const previewPath = path.join(previewDir, `${path.basename(normalizedEntryHtmlPath)}.png`);
+
+  try {
+    const previewStats = statSync(previewPath);
+    const sourceStats = statSync(normalizedEntryHtmlPath);
+    if (previewStats.isFile() && previewStats.mtimeMs >= sourceStats.mtimeMs) {
+      return previewPath;
+    }
+  } catch {}
+
+  try {
+    mkdirSync(previewDir, { recursive: true });
+  } catch {
+    return isReadableFile(previewPath) ? previewPath : '';
+  }
+
+  try {
+    const result = spawnSync('/usr/bin/qlmanage', [
+      '-t',
+      '-s',
+      String(QUICKLOOK_PREVIEW_SIZE),
+      '-o',
+      previewDir,
+      normalizedEntryHtmlPath,
+    ], {
+      encoding: 'utf8',
+      timeout: QUICKLOOK_TIMEOUT_MS,
+    });
+    if (result?.error || result?.status !== 0) {
+      return isReadableFile(previewPath) ? previewPath : '';
+    }
+  } catch {
+    return isReadableFile(previewPath) ? previewPath : '';
+  }
+
+  return isReadableFile(previewPath) ? previewPath : '';
+}
+
 function getConfig(ctx) {
   const roomConfig = ctx?.roomConfig || {};
   return {
     outputDir: safeTrim(roomConfig.outputDir, 4000),
     readmeFileName: sanitizeFileName(roomConfig.readmeFileName || 'README.md', 'README.md'),
+  };
+}
+
+function getInboundConceptBundle(ctx) {
+  const payloads = Array.isArray(ctx?.handoffContext?.payloads) ? ctx.handoffContext.payloads : [];
+  const payload = payloads.find((entry) => entry?.contract === 'concept_bundle.v1' && entry?.data && typeof entry.data === 'object');
+  return payload?.data || null;
+}
+
+function buildConceptContext(ctx) {
+  const bundle = getInboundConceptBundle(ctx);
+  if (!bundle?.selectedConcept || typeof bundle.selectedConcept !== 'object') return null;
+
+  const selected = bundle.selectedConcept;
+  return {
+    seedMode: safeTrim(bundle?.seed?.resolvedMode, 120),
+    seedModeLabel: safeTrim(bundle?.seed?.resolvedModeLabel, 160),
+    seedGuidance: safeTrim(bundle?.seed?.guidance, 1200),
+    recommendedDirection: safeTrim(bundle?.summary?.recommendedDirection, 500),
+    oneLiner: safeTrim(bundle?.summary?.oneLiner, 500),
+    selectedConcept: {
+      id: safeTrim(selected?.id, 120),
+      title: safeTrim(selected?.title, 200) || safeTrim(selected?.id, 120) || 'Selected Concept',
+      oneLiner: safeTrim(selected?.oneLiner, 500),
+      targetUser: safeTrim(selected?.targetUser, 500),
+      problem: safeTrim(selected?.problem, 1000),
+      coreValue: safeTrim(selected?.coreValue, 500),
+      requiredUserFlows: normalizeList(selected?.requiredUserFlows, 10, 400),
+      prototypeFocus: normalizeList(selected?.prototypeFocus, 10, 400),
+      nonMockFunctionality: normalizeList(selected?.nonMockFunctionality, 10, 400),
+      implementationBoundaries: normalizeList(selected?.implementationBoundaries, 10, 400),
+      improvementTargets: normalizeList(selected?.improvementTargets, 10, 400),
+    },
   };
 }
 
@@ -313,6 +471,7 @@ function findMissingRoles(participants) {
 function createInitialState(ctx) {
   const config = getConfig(ctx);
   const outputDir = config.outputDir ? path.resolve(config.outputDir) : '';
+  const conceptContext = buildConceptContext(ctx);
   const participants = getParticipants(ctx).map((participant) => ({
     ...participant,
     prototypeDir: outputDir ? path.join(outputDir, participant.prototypeKey) : '',
@@ -326,6 +485,7 @@ function createInitialState(ctx) {
       ...config,
       outputDir,
     },
+    conceptContext,
     participants,
     phase: PHASES.BUILD,
     cycleCount: 1,
@@ -348,6 +508,12 @@ function createInitialState(ctx) {
           ? `Prototype root directory: ${outputDir}`
           : 'Prototype Room needs an output directory from the room setup UI before it can start.',
       },
+      ...(conceptContext ? [{
+        displayName: 'Prototype Room',
+        role: 'system',
+        createdAt: Date.now(),
+        content: `Selected inbound concept: ${conceptContext.selectedConcept.title} (${conceptContext.selectedConcept.id}).`,
+      }] : []),
     ],
     missingRoles: findMissingRoles(participants),
     agentStatus: Object.fromEntries(participants.map((participant) => [participant.agentId, 'idle'])),
@@ -504,7 +670,7 @@ function scanPrototypeDirectory(rootDir) {
   };
 }
 
-function collectPrototypeSnapshot(state, participant) {
+function collectPrototypeSnapshot(state, participant, { generatePreviewImage = false } = {}) {
   const snapshot = {
     agentId: participant.agentId,
     displayName: participant.displayName,
@@ -517,6 +683,8 @@ function collectPrototypeSnapshot(state, participant) {
     fileCount: 0,
     treeLines: [],
     visibleFiles: [],
+    entryHtmlPath: '',
+    previewImagePath: '',
     readmeContent: '',
     readmeExcerpt: '',
     status: 'missing',
@@ -554,7 +722,41 @@ function collectPrototypeSnapshot(state, participant) {
     snapshot.status = 'incomplete';
   }
 
+  snapshot.entryHtmlPath = findExplicitEntryHtmlPath(snapshot.readmeContent, snapshot.prototypeDir)
+    || findEntryHtmlPath(snapshot.visibleFiles);
+  snapshot.previewImagePath = findPreviewImagePath(snapshot.visibleFiles);
+  if (generatePreviewImage && !snapshot.previewImagePath && snapshot.entryHtmlPath) {
+    snapshot.previewImagePath = ensureGeneratedPreviewImage(state?.config?.outputDir, snapshot.prototypeKey, snapshot.entryHtmlPath);
+  }
+
   return snapshot;
+}
+
+function buildConceptContextBlock(state) {
+  const conceptContext = state.conceptContext;
+  const selectedConcept = conceptContext?.selectedConcept;
+  if (!selectedConcept) return '';
+
+  return [
+    'Seed concept context:',
+    `- Selected concept: ${selectedConcept.title} (${selectedConcept.id})`,
+    conceptContext.seedModeLabel ? `- Explore-room interpretation: ${conceptContext.seedModeLabel}` : '',
+    selectedConcept.oneLiner ? `- One-liner: ${selectedConcept.oneLiner}` : '',
+    selectedConcept.targetUser ? `- Target user: ${selectedConcept.targetUser}` : '',
+    selectedConcept.problem ? `- Problem: ${selectedConcept.problem}` : '',
+    selectedConcept.coreValue ? `- Core value: ${selectedConcept.coreValue}` : '',
+    selectedConcept.requiredUserFlows.length > 0 ? `- Required user flows: ${selectedConcept.requiredUserFlows.join(' | ')}` : '',
+    selectedConcept.prototypeFocus.length > 0 ? `- Prototype focus: ${selectedConcept.prototypeFocus.join(' | ')}` : '',
+    selectedConcept.nonMockFunctionality.length > 0 ? `- Non-mock functionality: ${selectedConcept.nonMockFunctionality.join(' | ')}` : '',
+    selectedConcept.implementationBoundaries.length > 0 ? `- Implementation boundaries: ${selectedConcept.implementationBoundaries.join(' | ')}` : '',
+    selectedConcept.improvementTargets.length > 0 ? `- Improvement targets: ${selectedConcept.improvementTargets.join(' | ')}` : '',
+    conceptContext.oneLiner ? `- Bundle summary: ${conceptContext.oneLiner}` : '',
+    conceptContext.recommendedDirection ? `- Carry-forward guidance: ${conceptContext.recommendedDirection}` : '',
+    conceptContext.seedGuidance ? `- Seed guidance: ${conceptContext.seedGuidance}` : '',
+    'All prototypes in this room must stay within this selected concept.',
+    'Do not invent a different business or product thesis.',
+    'Compete on execution quality, UX, information architecture, and interaction model inside this concept.',
+  ].filter(Boolean).join('\n');
 }
 
 function refreshSnapshots(state) {
@@ -651,6 +853,7 @@ function pickPrototypeArtifacts(snapshot, { primary = false } = {}) {
   const textFiles = visibleFiles.filter((filePath) => TEXT_ARTIFACT_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
   const artifacts = [];
   const seen = new Set();
+  const canonicalHtmlPath = snapshot?.entryHtmlPath || '';
 
   const pushArtifact = (filePath, label, isPrimary = false) => {
     if (!filePath || seen.has(filePath)) return;
@@ -663,8 +866,8 @@ function pickPrototypeArtifacts(snapshot, { primary = false } = {}) {
     });
   };
 
-  if (htmlFiles[0]) {
-    pushArtifact(htmlFiles[0], primary ? 'Main prototype' : `${snapshot.prototypeLabel} prototype`, primary);
+  if (canonicalHtmlPath) {
+    pushArtifact(canonicalHtmlPath, primary ? 'Main prototype' : `${snapshot.prototypeLabel} prototype`, primary);
   } else if (snapshot?.readmePath) {
     pushArtifact(snapshot.readmePath, primary ? 'Prototype summary' : `${snapshot.prototypeLabel} summary`, primary);
   }
@@ -673,7 +876,7 @@ function pickPrototypeArtifacts(snapshot, { primary = false } = {}) {
     pushArtifact(filePath, path.basename(filePath));
   }
 
-  for (const filePath of htmlFiles.slice(1, 3)) {
+  for (const filePath of htmlFiles.filter((filePath) => filePath !== canonicalHtmlPath).slice(0, 2)) {
     pushArtifact(filePath, path.basename(filePath));
   }
 
@@ -685,7 +888,7 @@ function pickPrototypeArtifacts(snapshot, { primary = false } = {}) {
 }
 
 function buildPrototypeBundle(state) {
-  const snapshots = state.participants.map((participant) => collectPrototypeSnapshot(state, participant));
+  const snapshots = state.participants.map((participant) => collectPrototypeSnapshot(state, participant, { generatePreviewImage: true }));
   const latestSynthesis = state.reviewSyntheses.at(-1) || null;
   const ranked = latestSynthesis?.ranked || [];
   const leaderEntry = ranked[0] || null;
@@ -750,6 +953,9 @@ function buildPrototypeBundle(state) {
       status: snapshot.status,
       summary: getFirstParagraph(snapshot.readmeContent, snapshot.readmeExcerpt || ''),
       artifactPaths: pickPrototypeArtifacts(snapshot).map((artifact) => artifact.path),
+      entryHtmlPath: snapshot.entryHtmlPath || '',
+      previewImagePath: snapshot.previewImagePath || '',
+      previewPath: snapshot.previewImagePath || snapshot.entryHtmlPath || '',
     })),
     leaderboard: ranked.map((entry) => ({
       rank: entry.rank,
@@ -765,6 +971,8 @@ function buildPrototypeBundle(state) {
       generatedAt: new Date().toISOString(),
       outputDir: state.config.outputDir,
       cycleCount: state.cycleCount,
+      sourceConceptId: state.conceptContext?.selectedConcept?.id || null,
+      sourceConceptTitle: state.conceptContext?.selectedConcept?.title || null,
     },
   };
 }
@@ -858,6 +1066,7 @@ function buildPeerCatalog(state, participant) {
       `- Label: ${peer.prototypeLabel}`,
       `- Directory: ${peer.prototypeDir}`,
       `- Summary file: ${peer.readmePath}`,
+      snapshot.entryHtmlPath ? `- Canonical HTML entry: ${snapshot.entryHtmlPath}` : '- Canonical HTML entry: (missing)',
       `- Status: ${titleCase(snapshot.status)}`,
       snapshot.issue ? `- Issue: ${snapshot.issue}` : '',
       `- Visible files: ${snapshot.fileCount}`,
@@ -877,6 +1086,7 @@ function buildSelfSnapshot(state, participant) {
   return [
     `- Directory: ${participant.prototypeDir}`,
     `- Summary file: ${participant.readmePath}`,
+    snapshot.entryHtmlPath ? `- Canonical HTML entry: ${snapshot.entryHtmlPath}` : '- Canonical HTML entry: (missing)',
     `- Status: ${titleCase(snapshot.status)}`,
     snapshot.issue ? `- Issue: ${snapshot.issue}` : '',
     `- Visible files: ${snapshot.fileCount}`,
@@ -1254,6 +1464,7 @@ function buildBuildPrompt(state, participant) {
   return renderPromptTemplate(promptTemplates.build, {
     display_name: participant.displayName,
     objective: state.objective,
+    concept_context: buildConceptContextBlock(state),
     prototype_label: participant.prototypeLabel,
     prototype_key: participant.prototypeKey,
     prototype_dir: participant.prototypeDir,
@@ -1265,6 +1476,7 @@ function buildReviewPrompt(state, participant) {
   return renderPromptTemplate(promptTemplates.review, {
     display_name: participant.displayName,
     objective: state.objective,
+    concept_context: buildConceptContextBlock(state),
     prototype_label: participant.prototypeLabel,
     prototype_dir: participant.prototypeDir,
     peer_catalog: buildPeerCatalog(state, participant),
@@ -1275,6 +1487,7 @@ function buildImprovePrompt(state, participant) {
   return renderPromptTemplate(promptTemplates.improve, {
     display_name: participant.displayName,
     objective: state.objective,
+    concept_context: buildConceptContextBlock(state),
     prototype_label: participant.prototypeLabel,
     prototype_dir: participant.prototypeDir,
     readme_path: participant.readmePath,
@@ -1433,11 +1646,11 @@ async function continueFromCollectedResponses(ctx, state) {
     appendFeed(state, `Improve cycle ${state.cycleCount} finished.`);
     if (shouldStopForConvergence(state)) {
       appendFeed(state, 'Reviewers are no longer asking for material changes. Stopping after this improve pass.');
-      return finalizeRoom(ctx, state, 'prototype_converged');
+      return finalizeRoom(ctx, state, 'convergence');
     }
     if (state.cycleCount >= state.maxCycles) {
       appendFeed(state, 'Reached the configured cycle limit. Final prototype snapshots are ready.');
-      return finalizeRoom(ctx, state, 'prototype_complete');
+      return finalizeRoom(ctx, state, 'cycle_limit');
     }
 
     state.cycleCount += 1;

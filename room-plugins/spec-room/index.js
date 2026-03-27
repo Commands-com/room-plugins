@@ -49,6 +49,71 @@ const ROLE_FOCUS = {
   },
 };
 
+const PROTOTYPE_INFLUENCE_PROPOSAL = 'Use the selected prototype as directional input for the product shape and required user flows, but define the production design, non-mock functionality, and implementation boundaries independently rather than extending prototype files blindly.';
+const PROTOTYPE_INFLUENCE_ACCEPTANCE = 'The spec defines the production product core, required user flows, non-mock functionality, and implementation boundaries independently of the prototype; the prototype informs the spec but is not the implementation artifact.';
+const IMPLEMENTATION_CYCLE_BANDS = Object.freeze([
+  Object.freeze({
+    key: 'small',
+    minScore: 0,
+    maxScore: 5,
+    recommendedMaxCycles: 4,
+    label: 'small single-flow build',
+  }),
+  Object.freeze({
+    key: 'standard',
+    minScore: 6,
+    maxScore: 10,
+    recommendedMaxCycles: 7,
+    label: 'standard MVP',
+  }),
+  Object.freeze({
+    key: 'large',
+    minScore: 11,
+    maxScore: 15,
+    recommendedMaxCycles: 10,
+    label: 'larger multi-flow build',
+  }),
+  Object.freeze({
+    key: 'extensive',
+    minScore: 16,
+    maxScore: Infinity,
+    recommendedMaxCycles: 13,
+    label: 'larger build with substantial business logic or integration work',
+  }),
+]);
+const IMPLEMENTATION_COMPLEXITY_KEYWORDS = Object.freeze([
+  Object.freeze({
+    regex: /\b(auth|login|signup|session|permission|role[- ]based|rbac|oauth)\b/i,
+    weight: 2,
+    reason: 'Includes authentication or permissioning work',
+  }),
+  Object.freeze({
+    regex: /\b(database|schema|persistence|persist|storage|stored|cache|queue)\b/i,
+    weight: 2,
+    reason: 'Includes persistence or data-layer work',
+  }),
+  Object.freeze({
+    regex: /\b(api|integration|provider|webhook|sync|realtime|websocket)\b/i,
+    weight: 2,
+    reason: 'Includes integration or system-boundary work',
+  }),
+  Object.freeze({
+    regex: /\b(payment|billing|subscription|checkout|invoice)\b/i,
+    weight: 2,
+    reason: 'Includes billing or payment flows',
+  }),
+  Object.freeze({
+    regex: /\b(admin|dashboard|workflow|approval|multi-step|review cycle)\b/i,
+    weight: 1,
+    reason: 'Includes orchestration, workflow, or admin surfaces',
+  }),
+  Object.freeze({
+    regex: /\b(team|workspace|organization|collaboration|shared)\b/i,
+    weight: 2,
+    reason: 'Includes multi-user or collaboration behavior',
+  }),
+]);
+
 function safeTrim(value, maxLen = 2000) {
   return typeof value === 'string' ? value.trim().slice(0, maxLen) : '';
 }
@@ -214,6 +279,89 @@ function buildSpecFileTarget(config) {
   };
 }
 
+function getInboundPrototypeBundle(ctx) {
+  const payloads = Array.isArray(ctx?.handoffContext?.payloads) ? ctx.handoffContext.payloads : [];
+  const payload = payloads.find((entry) => entry?.contract === 'prototype_bundle.v1' && entry?.data && typeof entry.data === 'object');
+  return payload?.data || null;
+}
+
+function resolveSelectedPrototype(bundle) {
+  const prototypes = Array.isArray(bundle?.prototypes) ? bundle.prototypes : [];
+  if (prototypes.length === 0) return null;
+
+  const selectedPrototypeId = safeTrim(bundle?.selection?.prototypeId, 120)
+    || safeTrim(bundle?.leaderboard?.[0]?.prototypeId, 120)
+    || (prototypes.length === 1 ? safeTrim(prototypes[0]?.id, 120) : '');
+
+  if (selectedPrototypeId) {
+    const selected = prototypes.find((prototype) => safeTrim(prototype?.id, 120) === selectedPrototypeId);
+    if (selected) return selected;
+  }
+
+  return prototypes[0] || null;
+}
+
+function buildPrototypeContext(ctx) {
+  const bundle = getInboundPrototypeBundle(ctx);
+  if (!bundle) return null;
+
+  const selectedPrototype = resolveSelectedPrototype(bundle);
+  if (!selectedPrototype) return null;
+
+  const artifactPaths = Array.isArray(selectedPrototype?.artifactPaths)
+    ? selectedPrototype.artifactPaths.map((entry) => safeTrim(entry, 4000)).filter(Boolean)
+    : [];
+
+  const entryHtmlPath = safeTrim(selectedPrototype?.entryHtmlPath, 4000)
+    || artifactPaths.find((entry) => /\.html?$/i.test(entry))
+    || '';
+  const previewImagePath = safeTrim(selectedPrototype?.previewImagePath, 4000) || '';
+
+  return {
+    recommendedDirection: safeTrim(bundle?.summary?.recommendedDirection, SPEC_TEXT_LIMITS.mediumItem),
+    oneLiner: safeTrim(bundle?.summary?.oneLiner, SPEC_TEXT_LIMITS.summary),
+    selectedPrototype: {
+      id: safeTrim(selectedPrototype?.id, 120),
+      title: safeTrim(selectedPrototype?.title, 200) || safeTrim(selectedPrototype?.id, 120) || 'Selected Prototype',
+      directory: safeTrim(selectedPrototype?.directory, 4000),
+      summaryPath: safeTrim(selectedPrototype?.summaryPath, 4000),
+      summary: safeTrim(selectedPrototype?.summary, SPEC_TEXT_LIMITS.summary),
+      artifactPaths,
+      entryHtmlPath,
+      previewImagePath,
+    },
+  };
+}
+
+function buildPrototypeContextBlock(state) {
+  const prototypeContext = state.prototypeContext;
+  const selectedPrototype = prototypeContext?.selectedPrototype;
+  if (!selectedPrototype) return '';
+
+  return [
+    'Prototype handoff context:',
+    `- Selected prototype: ${selectedPrototype.title} (${selectedPrototype.id})`,
+    selectedPrototype.directory ? `- Directory: ${selectedPrototype.directory}` : '',
+    selectedPrototype.summaryPath ? `- Summary file: ${selectedPrototype.summaryPath}` : '',
+    selectedPrototype.entryHtmlPath ? `- HTML entry point: ${selectedPrototype.entryHtmlPath}` : '',
+    selectedPrototype.previewImagePath ? `- Preview image: ${selectedPrototype.previewImagePath}` : '',
+    selectedPrototype.summary ? `- Prototype summary: ${selectedPrototype.summary}` : '',
+    prototypeContext.oneLiner ? `- Bundle summary: ${prototypeContext.oneLiner}` : '',
+    prototypeContext.recommendedDirection ? `- Carry-forward guidance: ${prototypeContext.recommendedDirection}` : '',
+    'Use the prototype to inform the spec, not to define the implementation blindly.',
+    '- Extract the production product core from the prototype direction.',
+    '- Identify the required user flows the real product must support.',
+    '- Define the non-mock functionality the shipped system must deliver.',
+    '- Set clear implementation boundaries instead of assuming prototype files become production code.',
+    'Preserve the strongest ideas from the prototype when they help, but improve or replace them whenever the spec needs a better production shape.',
+  ].filter(Boolean).join('\n');
+}
+
+function appendPrototypeContext(prompt, state) {
+  const block = buildPrototypeContextBlock(state);
+  return block ? `${prompt}\n\n${block}` : prompt;
+}
+
 function createInitialState(ctx) {
   const participants = getParticipants(ctx);
   const objective = safeTrim(ctx?.objective, 2400) || 'No objective provided.';
@@ -221,6 +369,7 @@ function createInitialState(ctx) {
   const author = selectAuthor(participants);
   const reviewers = selectReviewers(participants, author?.agentId || null);
   const specTarget = buildSpecFileTarget(config);
+  const prototypeContext = buildPrototypeContext(ctx);
 
   return {
     objective,
@@ -239,6 +388,7 @@ function createInitialState(ctx) {
     exportedSpecPath: '',
     exportError: '',
     finalRevisionPass: false,
+    prototypeContext,
     missingRoles: findMissingRoles(participants),
     feedEntries: [
       {
@@ -255,6 +405,12 @@ function createInitialState(ctx) {
           ? `Canonical spec file: ${specTarget.path}`
           : 'Spec Room needs an export directory and export file name from the room setup UI before it can start.',
       },
+      ...(prototypeContext ? [{
+        displayName: 'Spec Room',
+        role: 'system',
+        createdAt: Date.now(),
+        content: `Selected inbound prototype: ${prototypeContext.selectedPrototype.title} (${prototypeContext.selectedPrototype.id})${prototypeContext.selectedPrototype.entryHtmlPath ? ` at ${prototypeContext.selectedPrototype.entryHtmlPath}` : ''}`,
+      }] : []),
     ],
     agentStatus: Object.fromEntries(participants.map((participant) => [participant.agentId, 'idle'])),
     disconnectedAgents: [],
@@ -326,7 +482,7 @@ function renderPromptTemplate(template, replacements) {
 }
 
 function buildWritePrompt(state, participant) {
-  return renderPromptTemplate(promptTemplates.write, {
+  const prompt = renderPromptTemplate(promptTemplates.write, {
     display_name: participant.displayName,
     role_title: titleCase(participant.role),
     role_focus: ROLE_FOCUS[participant.role]?.write || ROLE_FOCUS.implementer.write,
@@ -334,10 +490,11 @@ function buildWritePrompt(state, participant) {
     objective: state.objective,
     spec_file_path: state.specFilePath,
   });
+  return appendPrototypeContext(prompt, state);
 }
 
 function buildReviewPrompt(state, participant) {
-  return renderPromptTemplate(promptTemplates.review, {
+  const prompt = renderPromptTemplate(promptTemplates.review, {
     display_name: participant.displayName,
     role_title: titleCase(participant.role),
     role_focus: ROLE_FOCUS[participant.role]?.review || 'Review the current spec from your assigned lens.',
@@ -346,11 +503,12 @@ function buildReviewPrompt(state, participant) {
     spec_file_path: state.specFilePath,
     spec_markdown: state.currentSpecMarkdown || renderSpecMarkdown(state.draftSpec, state),
   });
+  return appendPrototypeContext(prompt, state);
 }
 
 function buildRevisePrompt(state, participant) {
   const latestReviewRound = getLatestRound(state, PHASES.REVIEW);
-  const prompt = renderPromptTemplate(promptTemplates.revise, {
+  const prompt = appendPrototypeContext(renderPromptTemplate(promptTemplates.revise, {
     display_name: participant.displayName,
     role_title: titleCase(participant.role),
     role_focus: ROLE_FOCUS[participant.role]?.revise || ROLE_FOCUS.implementer.revise,
@@ -359,7 +517,7 @@ function buildRevisePrompt(state, participant) {
     spec_file_path: state.specFilePath,
     spec_markdown: state.currentSpecMarkdown || renderSpecMarkdown(state.draftSpec, state),
     review_feedback: buildReviewFeedback(latestReviewRound),
-  });
+  }), state);
 
   if (!state.finalRevisionPass) return prompt;
 
@@ -420,7 +578,122 @@ function normalizeSpec(payload, state, stage) {
     normalized.implementationPlan = ['Break the approved scope into concrete implementation tasks.'];
   }
 
+  if (state.prototypeContext?.selectedPrototype) {
+    const proposalKeys = normalized.proposal.map((item) => canonicalKey(item));
+    if (!proposalKeys.some((item) => item.includes('prototype') && (item.includes('input') || item.includes('direction')))) {
+      normalized.proposal = dedupeList(
+        [...normalized.proposal, PROTOTYPE_INFLUENCE_PROPOSAL],
+        16,
+        SPEC_TEXT_LIMITS.longItem,
+      );
+    }
+
+    const acceptanceKeys = normalized.acceptanceCriteria.map((item) => canonicalKey(item));
+    if (!acceptanceKeys.some((item) => item.includes('prototype') && item.includes('implementation'))) {
+      normalized.acceptanceCriteria = dedupeList(
+        [...normalized.acceptanceCriteria, PROTOTYPE_INFLUENCE_ACCEPTANCE],
+        16,
+        SPEC_TEXT_LIMITS.mediumItem,
+      );
+    }
+  }
+
   return normalized;
+}
+
+function clampImplementationCycleRecommendation(value) {
+  if (!Number.isFinite(value)) return 4;
+  return Math.max(3, Math.min(Math.trunc(value), 14));
+}
+
+function estimateImplementationHints(spec) {
+  if (!spec || typeof spec !== 'object') {
+    return {
+      recommendedMaxCycles: 4,
+      complexity: 'small',
+      rationale: ['Defaulted to a small single-flow build because the spec was not available.'],
+    };
+  }
+
+  let score = 0;
+  const rationale = [];
+
+  const goalsCount = Array.isArray(spec.goals) ? spec.goals.length : 0;
+  const acceptanceCount = Array.isArray(spec.acceptanceCriteria) ? spec.acceptanceCriteria.length : 0;
+  const implementationCount = Array.isArray(spec.implementationPlan) ? spec.implementationPlan.length : 0;
+  const prerequisiteCount = Array.isArray(spec.prerequisites) ? spec.prerequisites.length : 0;
+  const riskCount = Array.isArray(spec.risks) ? spec.risks.length : 0;
+
+  if (goalsCount >= 3) {
+    score += 2;
+    rationale.push('Covers several concrete product goals.');
+  } else if (goalsCount >= 2) {
+    score += 1;
+  }
+
+  if (acceptanceCount >= 6) {
+    score += 3;
+    rationale.push('Defines many acceptance criteria that will need verification.');
+  } else if (acceptanceCount >= 3) {
+    score += 2;
+  } else if (acceptanceCount >= 2) {
+    score += 1;
+  }
+
+  if (implementationCount >= 6) {
+    score += 4;
+    rationale.push('Implementation plan spans many concrete build steps.');
+  } else if (implementationCount >= 4) {
+    score += 3;
+  } else if (implementationCount >= 2) {
+    score += 1;
+  }
+
+  if (prerequisiteCount >= 2) {
+    score += 2;
+    rationale.push('Requires prerequisite platform or host changes before feature work.');
+  } else if (prerequisiteCount === 1) {
+    score += 1;
+  }
+
+  if (riskCount >= 3) {
+    score += 1;
+  }
+
+  const combinedText = [
+    spec.title,
+    spec.summary,
+    spec.problem,
+    ...(Array.isArray(spec.goals) ? spec.goals : []),
+    ...(Array.isArray(spec.proposal) ? spec.proposal : []),
+    ...(Array.isArray(spec.acceptanceCriteria) ? spec.acceptanceCriteria : []),
+    ...(Array.isArray(spec.implementationPlan) ? spec.implementationPlan : []),
+    ...(Array.isArray(spec.prerequisites) ? spec.prerequisites : []),
+    ...(Array.isArray(spec.risks) ? spec.risks : []),
+  ].filter(Boolean).join('\n');
+
+  for (const keyword of IMPLEMENTATION_COMPLEXITY_KEYWORDS) {
+    if (keyword.regex.test(combinedText)) {
+      score += keyword.weight;
+      rationale.push(keyword.reason);
+    }
+  }
+
+  const band = IMPLEMENTATION_CYCLE_BANDS.find((entry) => score >= entry.minScore && score <= entry.maxScore)
+    || IMPLEMENTATION_CYCLE_BANDS[IMPLEMENTATION_CYCLE_BANDS.length - 1];
+  const recommendedMaxCycles = clampImplementationCycleRecommendation(band.recommendedMaxCycles);
+
+  return {
+    recommendedMaxCycles,
+    complexity: band.key,
+    rationale: dedupeList(
+      rationale.length > 0
+        ? rationale
+        : [`Sized as a ${band.label} based on the current product scope and implementation plan.`],
+      5,
+      SPEC_TEXT_LIMITS.mediumItem,
+    ),
+  };
 }
 
 function renderSection(title, items, ordered = false) {
@@ -707,6 +980,7 @@ function buildSpecBundle(state) {
   const recommendedDirection = spec.proposal?.[0]
     || spec.implementationPlan?.[0]
     || `Use ${spec.title} as the canonical ${titleCase(state.config.deliverableType)}.`;
+  const implementationHints = estimateImplementationHints(spec);
 
   return {
     contract: 'spec_bundle.v1',
@@ -741,11 +1015,15 @@ function buildSpecBundle(state) {
       deliverableType: state.config.deliverableType,
       audience: state.config.audience,
       detailLevel: state.config.detailLevel,
+      implementationHints,
       provenance: {
         roomType: 'spec_room',
         generatedAt: new Date().toISOString(),
         specFilePath: primaryPath || null,
         passCount: state.passCount,
+        sourcePrototypeId: state.prototypeContext?.selectedPrototype?.id || null,
+        sourcePrototypeTitle: state.prototypeContext?.selectedPrototype?.title || null,
+        sourcePrototypeEntryHtmlPath: state.prototypeContext?.selectedPrototype?.entryHtmlPath || null,
       },
     },
   };
@@ -1005,7 +1283,7 @@ async function continueFromCollectedResponses(ctx, state) {
 
     appendFeed(state, `Initial spec loaded from ${loaded.path}.`);
     if (state.passCount >= state.maxPasses) {
-      return finalizeSpec(ctx, state, 'max_cycles_reached');
+      return finalizeSpec(ctx, state, 'cycle_limit');
     }
     return issuePhaseDecision(ctx, state, PHASES.REVIEW);
   }
@@ -1031,7 +1309,7 @@ async function continueFromCollectedResponses(ctx, state) {
     }
 
     if (!summary.needsRevision) {
-      return finalizeSpec(ctx, state, 'spec_complete');
+      return finalizeSpec(ctx, state, 'convergence');
     }
 
     if (state.passCount >= state.maxPasses) {
@@ -1059,7 +1337,7 @@ async function continueFromCollectedResponses(ctx, state) {
     appendFeed(state, `Revised spec loaded from ${loaded.path}.`);
     if (state.passCount >= state.maxPasses) {
       appendFeed(state, 'Reached the pass limit after the revise pass. Stopping with the latest spec file.');
-      return finalizeSpec(ctx, state, 'max_cycles_reached');
+      return finalizeSpec(ctx, state, 'cycle_limit');
     }
 
     return issuePhaseDecision(ctx, state, PHASES.REVIEW);

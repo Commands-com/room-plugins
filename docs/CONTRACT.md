@@ -197,7 +197,7 @@ Allowed keys:
 
 Rules:
 
-- contract identifiers are exact, versioned strings such as `spec_bundle.v1`
+- contract identifiers are exact, versioned strings such as `concept_bundle.v1`, `prototype_bundle.v1`, or `spec_bundle.v1`
 - `inputs` describe what upstream handoff payloads the room can consume
 - `outputs` describe what canonical payloads the room emits for downstream stages
 - `defaultApprovalMode`, when present, must be a non-empty string; built-in rooms
@@ -209,10 +209,10 @@ Example:
 ```json
 "handoff": {
   "inputs": [
-    { "contract": "prototype_bundle.v1", "required": false, "multiple": false }
+    { "contract": "concept_bundle.v1", "required": false, "multiple": false }
   ],
   "outputs": [
-    { "contract": "spec_bundle.v1", "default": true }
+    { "contract": "prototype_bundle.v1", "default": true }
   ],
   "defaultApprovalMode": "auto"
 }
@@ -623,9 +623,9 @@ getFinalReport(ctx) {
     ],
     handoffPayloads: [
       {
-        contract: 'prototype_bundle.v1',
+        contract: 'concept_bundle.v1',
         data: {
-          summary: { title: 'Saved Rooms', oneLiner: '...', recommendedDirection: '...' },
+          summary: { title: 'Makeup Fit Advisor', oneLiner: '...', recommendedDirection: '...' },
         },
       },
     ],

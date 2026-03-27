@@ -440,11 +440,11 @@ style workflows can validate stage compatibility.
 ```yaml
 handoff:
   inputs:
-    - contract: spec_bundle.v1
+    - contract: concept_bundle.v1
       required: false
       multiple: false
   outputs:
-    - contract: implementation_bundle.v1
+    - contract: prototype_bundle.v1
       default: true
   defaultApprovalMode: auto
 ```

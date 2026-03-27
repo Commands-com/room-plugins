@@ -2,9 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 import { createPlugin } from '../room-plugins/prototype-room/index.js';
+
+async function pathExists(targetPath) {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function makeMockCtx(overrides = {}) {
   let state = null;
@@ -38,6 +47,7 @@ function makeMockCtx(overrides = {}) {
       readmeFileName: 'README.md',
       ...(overrides.roomConfig || {}),
     },
+    handoffContext: overrides.handoffContext || null,
     limits: {
       maxCycles: 2,
       ...(overrides.limits || {}),
@@ -86,6 +96,42 @@ async function writePrototypeFiles(ctx, prototypeKey, files) {
   return participant;
 }
 
+function buildConceptBundle() {
+  return {
+    seed: {
+      objective: 'Makeup',
+      requestedMode: 'domain_search',
+      requestedModeLabel: 'Domain Search',
+      resolvedMode: 'domain_search',
+      resolvedModeLabel: 'Domain Search',
+      guidance: 'Treat the seed as a space to search. Your job is to find the single strongest concept direction worth sending into Prototype Room next.',
+    },
+    summary: {
+      title: 'Makeup Fit Advisor',
+      oneLiner: 'A guided advisor that turns a few inputs into a strong personal makeup starting point.',
+      recommendedDirection: 'Prototype Makeup Fit Advisor and keep the recommendation-to-routine loop strong.',
+    },
+    selection: {
+      mode: 'room_default',
+      conceptId: 'claude',
+      conceptTitle: 'Makeup Fit Advisor',
+    },
+    selectedConcept: {
+      id: 'claude',
+      title: 'Makeup Fit Advisor',
+      oneLiner: 'A guided advisor that turns a few inputs into a strong personal makeup starting point.',
+      targetUser: 'Users who want makeup guidance without overwhelming product sprawl.',
+      problem: 'Users want specific guidance but struggle to translate general beauty advice into a personal plan.',
+      coreValue: 'Give users a personally relevant makeup starting point quickly.',
+      requiredUserFlows: ['Answer a short fit quiz', 'Review recommendation', 'Refine or save the routine'],
+      prototypeFocus: ['Fit quiz', 'Recommendation result', 'Routine refinement'],
+      nonMockFunctionality: ['Save recommendation', 'Edit routine inputs'],
+      implementationBoundaries: ['Do not build real-time face analysis in v1'],
+      improvementTargets: ['Clarify the post-recommendation editing flow'],
+    },
+  };
+}
+
 test('prototype room runs multi-cycle build, review, synthesize, and improve across per-model folders', async () => {
   const outputDir = await mkdtemp(path.join(os.tmpdir(), 'prototype-room-'));
 
@@ -112,9 +158,11 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
     await writePrototypeFiles(ctx, 'openai', {
       'README.md': '# OpenAI Prototype\n\nA bold dashboard-first prototype with live pipeline cards.',
       'index.html': '<html><body>OpenAI Prototype</body></html>',
+      'hero.png': 'openai preview',
     });
     await writePrototypeFiles(ctx, 'claude', {
       'README.md': '# Claude Prototype\n\nA calmer inspector-first prototype with strong artifact detail.',
+      'index.html': '<html><body>Claude Prototype</body></html>',
       'app.js': 'console.log("claude");',
     });
     await writePrototypeFiles(ctx, 'gemini', {
@@ -243,6 +291,7 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
     });
     await writePrototypeFiles(ctx, 'claude', {
       'README.md': '# Claude Prototype\n\nNow includes a clearer overview and a more visual entry point.',
+      'index.html': '<html><body>Claude Prototype v2</body></html>',
       'app.js': 'console.log("claude v2");',
       'overview.md': '# Overview',
     });
@@ -360,6 +409,7 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
     });
     await writePrototypeFiles(ctx, 'claude', {
       'README.md': '# Claude Prototype\n\nNow includes clearer top-level navigation and live room status framing.',
+      'index.html': '<html><body>Claude Prototype v3</body></html>',
       'app.js': 'console.log("claude v3");',
       'overview.md': '# Overview v2',
       'nav.md': '# Navigation',
@@ -377,7 +427,7 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
       { agentId: 'gemini_1', response: '## Result\n- Added stronger stage summaries and more grounded child-room detail.\n## Prototype Path\n`gemini`\n## Applied Changes\n- Added summary.\n## Deferred\n- None.\n## Open Questions\n- None.' },
     ]);
 
-    assert.deepEqual(stopDecision, { type: 'stop', reason: 'prototype_complete' });
+    assert.deepEqual(stopDecision, { type: 'stop', reason: 'cycle_limit' });
 
     const finalState = ctx.getState();
     assert.equal(finalState.phase, 'complete');
@@ -388,6 +438,7 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
 
     const claudeReadme = await readFile(path.join(outputDir, 'claude', 'README.md'), 'utf8');
     assert.match(claudeReadme, /live room status framing/i);
+    assert.equal(await pathExists(path.join(outputDir, '.commands-preview')), false);
 
     const finalReport = plugin.getFinalReport(ctx);
     assert.ok(finalReport);
@@ -395,6 +446,20 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
     assert.equal(finalReport.handoffPayloads[0].data.summary.title, 'OpenAI Prototype');
     assert.match(finalReport.handoffPayloads[0].data.summary.recommendedDirection, /OpenAI/i);
     assert.equal(finalReport.handoffPayloads[0].data.prototypes.length, 3);
+    const openaiPrototype = finalReport.handoffPayloads[0].data.prototypes.find((prototype) => prototype.id === 'openai');
+    assert.equal(openaiPrototype.entryHtmlPath, path.join(outputDir, 'openai', 'index.html'));
+    assert.equal(openaiPrototype.previewImagePath, path.join(outputDir, 'openai', 'hero.png'));
+    assert.equal(openaiPrototype.previewPath, path.join(outputDir, 'openai', 'hero.png'));
+    const claudePrototype = finalReport.handoffPayloads[0].data.prototypes.find((prototype) => prototype.id === 'claude');
+    assert.equal(claudePrototype.entryHtmlPath, path.join(outputDir, 'claude', 'index.html'));
+    const expectedClaudePreviewPath = path.join(outputDir, '.commands-preview', 'claude', 'index.html.png');
+    if (claudePrototype.previewImagePath) {
+      assert.equal(claudePrototype.previewImagePath, expectedClaudePreviewPath);
+      assert.equal(claudePrototype.previewPath, expectedClaudePreviewPath);
+    } else {
+      assert.equal(claudePrototype.previewPath, path.join(outputDir, 'claude', 'index.html'));
+    }
+    assert.equal(await pathExists(path.join(outputDir, 'claude', '.commands-preview')), false);
     assert.equal(finalReport.handoffPayloads[0].data.leaderboard[0].prototypeTitle, 'OpenAI');
     assert.ok(finalReport.handoffPayloads[0].data.artifacts.some((artifact) => artifact.kind === 'html'));
     assert.ok(finalReport.artifacts.some((artifact) => artifact.type === 'html'));
@@ -411,6 +476,89 @@ test('prototype room requires an output directory from room setup', () => {
   const decision = plugin.onRoomStart(ctx);
 
   assert.deepEqual(decision, { type: 'stop', reason: 'missing_output_directory' });
+});
+
+test('prototype room keeps all prototypes focused on the selected inbound concept', async () => {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), 'prototype-room-concept-handoff-'));
+
+  try {
+    const ctx = makeMockCtx({
+      roomConfig: {
+        outputDir,
+      },
+      handoffContext: {
+        payloads: [
+          { contract: 'concept_bundle.v1', data: buildConceptBundle() },
+        ],
+      },
+    });
+    const plugin = createPlugin();
+
+    plugin.init(ctx);
+    const state = ctx.getState();
+    assert.equal(state.conceptContext.selectedConcept.title, 'Makeup Fit Advisor');
+    assert.match(state.feedEntries.at(-1).content, /Selected inbound concept: Makeup Fit Advisor \(claude\)\./);
+
+    const startDecision = plugin.onRoomStart(ctx);
+    assert.equal(startDecision.type, 'fan_out');
+    assert.match(startDecision.targets[0].message, /Seed concept context:/);
+    assert.match(startDecision.targets[0].message, /Selected concept: Makeup Fit Advisor \(claude\)/);
+    assert.match(startDecision.targets[0].message, /Explore-room interpretation: Domain Search/);
+    assert.match(startDecision.targets[0].message, /All prototypes in this room must stay within this selected concept\./);
+    assert.match(startDecision.targets[0].message, /Do not invent a different business or product thesis\./);
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('prototype room prefers an explicit summary entry point and falls back to index.html when metadata is missing', async () => {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), 'prototype-room-entrypoint-'));
+
+  try {
+    const ctx = makeMockCtx({
+      roomConfig: {
+        outputDir,
+      },
+    });
+    const plugin = createPlugin();
+
+    plugin.init(ctx);
+    plugin.onRoomStart(ctx);
+
+    await writePrototypeFiles(ctx, 'openai', {
+      'README.md': [
+        '# OpenAI Prototype',
+        '',
+        'A strong prototype with an explicit non-index entry point.',
+        '',
+        '## Entry Point',
+        '- app/main.html',
+      ].join('\n'),
+      'index.html': '<html><body>fallback</body></html>',
+      'app/main.html': '<html><body>canonical</body></html>',
+    });
+    await writePrototypeFiles(ctx, 'claude', {
+      'README.md': '# Claude Prototype\n\nA strong prototype with the default index fallback.',
+      'index.html': '<html><body>claude</body></html>',
+    });
+    await writePrototypeFiles(ctx, 'gemini', {
+      'README.md': '# Gemini Prototype\n\nA text-only prototype for now.',
+      'notes.md': '# Notes',
+    });
+
+    await plugin.onFanOutComplete(ctx, [
+      { agentId: 'openai_1', response: '## Result\n- Built the prototype.\n## Prototype Path\n`openai`\n## Entry Point\n- app/main.html\n## Key Files\n- app/main.html\n## Notes\n- Explicit entry point.' },
+      { agentId: 'claude_1', response: '## Result\n- Built the prototype.\n## Prototype Path\n`claude`\n## Entry Point\n- index.html\n## Key Files\n- index.html\n## Notes\n- Default entry point.' },
+      { agentId: 'gemini_1', response: '## Result\n- Built the prototype.\n## Prototype Path\n`gemini`\n## Entry Point\n- None.\n## Key Files\n- notes.md\n## Notes\n- No HTML yet.' },
+    ]);
+
+    const state = ctx.getState();
+    assert.equal(state.snapshots.openai_1.entryHtmlPath, path.join(outputDir, 'openai', 'app', 'main.html'));
+    assert.equal(state.snapshots.claude_1.entryHtmlPath, path.join(outputDir, 'claude', 'index.html'));
+    assert.equal(state.snapshots.gemini_1.entryHtmlPath, '');
+  } finally {
+    await rm(outputDir, { recursive: true, force: true });
+  }
 });
 
 test('prototype room de-duplicates provider folder names when two participants share the same family', async () => {
@@ -634,7 +782,7 @@ test('prototype room stops after an improve pass once reviewers stop asking for 
       { agentId: 'claude_1', response: '## Result\n- Added final polish only.\n## Prototype Path\n`claude`\n## Applied Changes\n- Minor polish.\n## Deferred\n- None.\n## Open Questions\n- None.' },
     ]);
 
-    assert.deepEqual(stopDecision, { type: 'stop', reason: 'prototype_converged' });
+    assert.deepEqual(stopDecision, { type: 'stop', reason: 'convergence' });
     assert.equal(ctx.getState().phase, 'complete');
   } finally {
     await rm(outputDir, { recursive: true, force: true });
