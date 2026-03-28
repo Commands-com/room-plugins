@@ -179,6 +179,35 @@
       { "metricKey": "winnerIndexes", "label": "Proposed Indexes", "language": "sql" }
     ]
   },
+  "cli": {
+    "command": "postgres-query-optimize",
+    "description": "Optimize a slow Postgres query with empirical benchmarking",
+    "positionalArgs": [
+      {
+        "name": "postgres-connect-string",
+        "type": "string",
+        "required": true,
+        "description": "Postgres connection string for the target database",
+        "mapTo": "roomConfig.dbUrl"
+      },
+      {
+        "name": "query",
+        "type": "string",
+        "required": true,
+        "description": "The slow SELECT query to benchmark and optimize",
+        "mapTo": "roomConfig.slowQuery"
+      }
+    ],
+    "skill": {
+      "name": "postgres-query-optimize",
+      "description": "Run the Postgres query optimizer against a real or demo workload",
+      "defaultObjective": "Optimize a slow Postgres query for lower latency without unsafe changes",
+      "contextGathering": {
+        "requiredInputs": ["postgres-connect-string", "query"],
+        "optionalInputs": []
+      }
+    }
+  },
   "configSchema": {
     "plannedCandidatesPerCycle": { "type": "integer", "min": 1, "max": 10, "default": 4 },
     "promoteTopK": { "type": "integer", "min": 1, "max": 5, "default": 2 },

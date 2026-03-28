@@ -206,16 +206,7 @@
       }
     ],
     "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (cycle {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
-    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
-    "skill": {
-      "name": "prototype-room",
-      "description": "Run a side-by-side prototype bakeoff where each AI builds, reviews, and iteratively improves its own version",
-      "defaultObjective": "Build multiple prototypes of the same objective, review them, and iterate using peer feedback",
-      "contextGathering": {
-        "requiredInputs": ["idea"],
-        "optionalInputs": []
-      }
-    }
+    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
   },
   "roomConfigSchema": {
     "outputDir": {

@@ -1,0 +1,222 @@
+{
+  "id": "marketing_execution_room",
+  "name": "Marketing Execution Room",
+  "version": "1.0.0",
+  "orchestratorType": "marketing_execution_room",
+  "description": "Turn a marketing plan into concrete launch-ready marketing assets in an output directory",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["operator", "copywriter", "critic"],
+    "optional": [],
+    "minCount": {
+      "operator": 1,
+      "copywriter": 1,
+      "critic": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 4, "min": 1, "max": 6 },
+    "maxTurns": { "default": 12, "min": 3, "max": 100 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 90000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "operator",
+    "turnFloorFormula": "1 + N"
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "executionPhase",
+        "label": "Phase",
+        "phases": ["write", "review", "revise", "complete"],
+        "phaseLabels": {
+          "write": "Write",
+          "review": "Review",
+          "revise": "Revise",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "progress",
+        "key": "executionProgress",
+        "label": "Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "counter-group",
+        "key": "executionCounts",
+        "label": "Execution",
+        "layout": "row",
+        "counters": [
+          { "key": "assets", "label": "Assets", "color": "blue" },
+          { "key": "priorities", "label": "Priorities", "color": "green" },
+          { "key": "risks", "label": "Risks", "color": "orange" },
+          { "key": "questions", "label": "Questions", "color": "yellow" }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "contributorStatus",
+        "label": "Contributors"
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 100 },
+          { "key": "contributor", "label": "Contributor", "width": 160 },
+          { "key": "role", "label": "Role", "width": 120 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 360 }
+        ]
+      },
+      {
+        "type": "conversation-feed",
+        "key": "roomFeed",
+        "label": "Room Feed"
+      },
+      {
+        "type": "code-blocks",
+        "key": "executionArtifacts",
+        "label": "Execution Summary",
+        "language": "markdown"
+      }
+    ]
+  },
+  "objective": {
+    "required": true,
+    "placeholder": "Describe the launch, campaign, or marketing goal to execute"
+  },
+  "handoff": {
+    "inputs": [
+      { "contract": "marketing_plan_bundle.v1", "required": false, "multiple": false }
+    ],
+    "outputs": [
+      { "contract": "marketing_execution_bundle.v1", "default": true }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Marketing Execution Room",
+    "typeTag": "MKT EXEC",
+    "cycleNoun": "Pass",
+    "reportTitle": "Marketing Execution Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Building concrete marketing assets",
+      "fanOut": "Running the current marketing-execution pass",
+      "singleTurn": "Unexpected single-turn flow",
+      "synthesis": "Checking the execution summary and asset folder",
+      "planning": "Preparing the next pass"
+    },
+    "phaseActivityMessages": {
+      "write": "Operator is producing the first set of assets",
+      "review": "Copywriter and critic are reviewing the assets",
+      "revise": "Operator is improving the assets",
+      "complete": "Marketing execution complete"
+    },
+    "defaultRoster": [
+      { "role": "operator", "displayName": "Operator" },
+      { "role": "copywriter", "displayName": "Copywriter" },
+      { "role": "critic", "displayName": "Critic" }
+    ],
+    "defaultAddRole": "operator"
+  },
+  "report": {
+    "summaryMetrics": ["executionCounts"],
+    "table": {
+      "metricKey": "contributionTable",
+      "columns": [
+        { "key": "phase", "label": "Phase", "width": 100 },
+        { "key": "contributor", "label": "Contributor", "width": 160 },
+        { "key": "role", "label": "Role", "width": 120 },
+        { "key": "status", "label": "Status", "width": 110 },
+        { "key": "summary", "label": "Summary", "width": 360 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "finalArtifacts", "label": "Final Execution Summary", "language": "markdown" }
+    ]
+  },
+  "cli": {
+    "command": "marketing-execution-room",
+    "description": "Execute a marketing plan into concrete assets in an output directory",
+    "positionalArgs": [
+      {
+        "name": "brief",
+        "type": "string",
+        "required": true,
+        "description": "Launch or marketing objective the room should execute",
+        "mapTo": "objective"
+      }
+    ],
+    "startParams": [
+      {
+        "name": "output-dir",
+        "type": "directory",
+        "required": true,
+        "description": "Directory where the summary file and generated marketing assets should live",
+        "mapTo": "roomConfig.outputDir"
+      },
+      {
+        "name": "file-name",
+        "type": "string",
+        "required": false,
+        "default": "marketing-execution.md",
+        "description": "File name for the canonical execution summary markdown file",
+        "mapTo": "roomConfig.fileName"
+      },
+      {
+        "name": "project-dir",
+        "type": "directory",
+        "required": false,
+        "description": "Optional project directory for grounding against the real product",
+        "mapTo": "roomConfig.projectDir"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "executionPhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      },
+      {
+        "key": "executionProgress",
+        "label": "Progress",
+        "format": "progress"
+      },
+      {
+        "key": "executionCounts",
+        "label": "Execution",
+        "format": "counter-group"
+      }
+    ],
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (pass {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+  },
+  "roomConfigSchema": {
+    "outputDir": {
+      "type": "directory",
+      "label": "Output Directory",
+      "required": true,
+      "description": "Directory where the summary file and generated marketing assets should live."
+    },
+    "fileName": {
+      "type": "string",
+      "label": "File Name",
+      "default": "marketing-execution.md",
+      "description": "File name for the canonical execution summary markdown file."
+    },
+    "projectDir": {
+      "type": "directory",
+      "label": "Project Directory",
+      "description": "Optional project directory for grounding against the real product."
+    }
+  }
+}

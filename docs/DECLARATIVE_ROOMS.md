@@ -451,7 +451,10 @@ handoff:
 
 The field-level schema for `handoff` matches the classic-plugin
 `manifest.json` contract in [`CONTRACT.md`](./CONTRACT.md). Contract IDs must
-exist in the host's known handoff-contract registry.
+exist in the host's known handoff-contract registry. Common examples now
+include `concept_bundle.v1`, `prototype_bundle.v1`, `spec_bundle.v1`,
+`competitive_analysis_bundle.v1`, `marketing_plan_bundle.v1`, and
+`marketing_execution_bundle.v1`.
 
 ## Family: `empirical_search`
 

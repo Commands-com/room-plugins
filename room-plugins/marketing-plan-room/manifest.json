@@ -1,0 +1,234 @@
+{
+  "id": "marketing_plan_room",
+  "name": "Marketing Plan Room",
+  "version": "1.0.0",
+  "orchestratorType": "marketing_plan_room",
+  "description": "Turn competitive analysis into a concrete marketing plan with clear positioning, channels, campaigns, and launch moves",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["strategist", "growth", "critic"],
+    "optional": [],
+    "minCount": {
+      "strategist": 1,
+      "growth": 1,
+      "critic": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 4, "min": 1, "max": 6 },
+    "maxTurns": { "default": 12, "min": 3, "max": 100 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 90000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "strategist",
+    "turnFloorFormula": "1 + N"
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "planPhase",
+        "label": "Phase",
+        "phases": ["write", "review", "revise", "complete"],
+        "phaseLabels": {
+          "write": "Write",
+          "review": "Review",
+          "revise": "Revise",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "progress",
+        "key": "planProgress",
+        "label": "Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "counter-group",
+        "key": "planCounts",
+        "label": "Plan",
+        "layout": "row",
+        "counters": [
+          { "key": "channels", "label": "Channels", "color": "blue" },
+          { "key": "campaigns", "label": "Campaigns", "color": "green" },
+          { "key": "assets", "label": "Assets", "color": "orange" },
+          { "key": "metrics", "label": "Metrics", "color": "yellow" }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "contributorStatus",
+        "label": "Contributors"
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 100 },
+          { "key": "contributor", "label": "Contributor", "width": 160 },
+          { "key": "role", "label": "Role", "width": 120 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 360 }
+        ]
+      },
+      {
+        "type": "conversation-feed",
+        "key": "roomFeed",
+        "label": "Room Feed"
+      },
+      {
+        "type": "code-blocks",
+        "key": "planArtifacts",
+        "label": "Marketing Plan",
+        "language": "markdown"
+      }
+    ]
+  },
+  "objective": {
+    "required": true,
+    "placeholder": "Describe the product, audience, or launch goal the marketing plan should serve"
+  },
+  "handoff": {
+    "inputs": [
+      { "contract": "competitive_analysis_bundle.v1", "required": false, "multiple": false }
+    ],
+    "outputs": [
+      { "contract": "marketing_plan_bundle.v1", "default": true }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Marketing Plan Room",
+    "typeTag": "MARKET",
+    "cycleNoun": "Pass",
+    "reportTitle": "Marketing Plan Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Shaping the marketing plan",
+      "fanOut": "Running the current marketing-plan pass",
+      "singleTurn": "Unexpected single-turn flow",
+      "synthesis": "Checking the canonical marketing plan file",
+      "planning": "Preparing the next pass"
+    },
+    "phaseActivityMessages": {
+      "write": "Strategist is drafting the marketing plan",
+      "review": "Growth reviewer and critic are pressure-testing the plan",
+      "revise": "Strategist is refining the marketing plan",
+      "complete": "Marketing plan complete"
+    },
+    "defaultRoster": [
+      { "role": "strategist", "displayName": "Strategist" },
+      { "role": "growth", "displayName": "Growth" },
+      { "role": "critic", "displayName": "Critic" }
+    ],
+    "defaultAddRole": "strategist"
+  },
+  "report": {
+    "summaryMetrics": ["planCounts"],
+    "table": {
+      "metricKey": "contributionTable",
+      "columns": [
+        { "key": "phase", "label": "Phase", "width": 100 },
+        { "key": "contributor", "label": "Contributor", "width": 160 },
+        { "key": "role", "label": "Role", "width": 120 },
+        { "key": "status", "label": "Status", "width": 110 },
+        { "key": "summary", "label": "Summary", "width": 360 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "finalArtifacts", "label": "Final Marketing Plan", "language": "markdown" }
+    ]
+  },
+  "cli": {
+    "command": "marketing-plan-room",
+    "description": "Turn competitive analysis into a concrete marketing plan",
+    "positionalArgs": [
+      {
+        "name": "brief",
+        "type": "string",
+        "required": true,
+        "description": "Product, launch, or growth objective for the marketing plan",
+        "mapTo": "objective"
+      }
+    ],
+    "startParams": [
+      {
+        "name": "output-dir",
+        "type": "directory",
+        "required": true,
+        "description": "Directory for the canonical marketing plan markdown file",
+        "mapTo": "roomConfig.outputDir"
+      },
+      {
+        "name": "file-name",
+        "type": "string",
+        "required": false,
+        "default": "marketing-plan.md",
+        "description": "File name for the canonical marketing plan markdown file",
+        "mapTo": "roomConfig.fileName"
+      },
+      {
+        "name": "project-dir",
+        "type": "directory",
+        "required": false,
+        "description": "Optional project directory for additional grounding",
+        "mapTo": "roomConfig.projectDir"
+      },
+      {
+        "name": "market-focus",
+        "type": "string",
+        "required": false,
+        "description": "Optional market, audience, or segment emphasis",
+        "mapTo": "roomConfig.marketFocus"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "planPhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      },
+      {
+        "key": "planProgress",
+        "label": "Progress",
+        "format": "progress"
+      },
+      {
+        "key": "planCounts",
+        "label": "Plan",
+        "format": "counter-group"
+      }
+    ],
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (pass {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+  },
+  "roomConfigSchema": {
+    "outputDir": {
+      "type": "directory",
+      "label": "Output Directory",
+      "required": true,
+      "description": "Directory for the canonical marketing plan markdown file."
+    },
+    "fileName": {
+      "type": "string",
+      "label": "File Name",
+      "default": "marketing-plan.md",
+      "description": "File name for the canonical marketing plan markdown file."
+    },
+    "projectDir": {
+      "type": "directory",
+      "label": "Project Directory",
+      "description": "Optional project directory for additional grounding."
+    },
+    "marketFocus": {
+      "type": "string",
+      "label": "Market Focus",
+      "description": "Optional hint about the audience, market, or segment to emphasize."
+    }
+  }
+}

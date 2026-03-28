@@ -197,7 +197,7 @@ Allowed keys:
 
 Rules:
 
-- contract identifiers are exact, versioned strings such as `concept_bundle.v1`, `prototype_bundle.v1`, or `spec_bundle.v1`
+- contract identifiers are exact, versioned strings such as `concept_bundle.v1`, `prototype_bundle.v1`, `spec_bundle.v1`, `competitive_analysis_bundle.v1`, `marketing_plan_bundle.v1`, or `marketing_execution_bundle.v1`
 - `inputs` describe what upstream handoff payloads the room can consume
 - `outputs` describe what canonical payloads the room emits for downstream stages
 - `defaultApprovalMode`, when present, must be a non-empty string; built-in rooms

@@ -189,16 +189,7 @@
       }
     ],
     "statusTemplate": "[{{command}}] {{roomId}}: {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
-    "listTemplate": "{{roomId}}  {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
-    "skill": {
-      "name": "explore-room",
-      "description": "Explore and rank the strongest concept direction before prototyping",
-      "defaultObjective": "Find the strongest concept direction for the seeded domain or refine a specific seeded concept into a clear prototype-ready direction",
-      "contextGathering": {
-        "requiredInputs": ["seed"],
-        "optionalInputs": []
-      }
-    }
+    "listTemplate": "{{roomId}}  {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
   },
   "roomConfigSchema": {
     "seedMode": {

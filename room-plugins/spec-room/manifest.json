@@ -234,16 +234,7 @@
       }
     ],
     "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (pass {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
-    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
-    "skill": {
-      "name": "spec-room",
-      "description": "Turn rough ideas into concrete build-ready specs",
-      "defaultObjective": "Turn the provided idea into a concrete, build-ready spec",
-      "contextGathering": {
-        "requiredInputs": ["idea"],
-        "optionalInputs": []
-      }
-    }
+    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
   },
   "roomConfigSchema": {
     "deliverableType": {

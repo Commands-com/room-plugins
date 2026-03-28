@@ -1,0 +1,233 @@
+{
+  "id": "competitive_analysis_room",
+  "name": "Competitive Analysis Room",
+  "version": "1.0.0",
+  "orchestratorType": "competitive_analysis_room",
+  "description": "Inspect a project directory, infer likely competitors and market positioning, and produce a competitive analysis brief for downstream marketing planning",
+  "supportsQuorum": false,
+  "roles": {
+    "required": ["analyst", "strategist", "critic"],
+    "optional": [],
+    "minCount": {
+      "analyst": 1,
+      "strategist": 1,
+      "critic": 1
+    }
+  },
+  "limits": {
+    "maxCycles": { "default": 4, "min": 1, "max": 6 },
+    "maxTurns": { "default": 12, "min": 3, "max": 100 },
+    "maxDurationMs": { "default": 3600000, "min": 60000, "max": 7200000 },
+    "maxFailures": { "default": 5, "min": 1, "max": 20 },
+    "agentTimeoutMs": { "default": 3600000, "min": 10000, "max": 3600000 },
+    "pluginHookTimeoutMs": { "default": 120000, "min": 5000, "max": 300000 },
+    "llmTimeoutMs": { "default": 90000, "min": 10000, "max": 300000 },
+    "turnFloorRole": "analyst",
+    "turnFloorFormula": "1 + N"
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "analysisPhase",
+        "label": "Phase",
+        "phases": ["write", "review", "revise", "complete"],
+        "phaseLabels": {
+          "write": "Write",
+          "review": "Review",
+          "revise": "Revise",
+          "complete": "Complete"
+        }
+      },
+      {
+        "type": "progress",
+        "key": "analysisProgress",
+        "label": "Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "counter-group",
+        "key": "analysisCounts",
+        "label": "Analysis",
+        "layout": "row",
+        "counters": [
+          { "key": "competitors", "label": "Competitors", "color": "blue" },
+          { "key": "channels", "label": "Channels", "color": "green" },
+          { "key": "risks", "label": "Risks", "color": "orange" },
+          { "key": "questions", "label": "Questions", "color": "yellow" }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "contributorStatus",
+        "label": "Contributors"
+      },
+      {
+        "type": "table",
+        "key": "contributionTable",
+        "label": "Contributions",
+        "sortable": true,
+        "columns": [
+          { "key": "phase", "label": "Phase", "width": 100 },
+          { "key": "contributor", "label": "Contributor", "width": 160 },
+          { "key": "role", "label": "Role", "width": 120 },
+          { "key": "status", "label": "Status", "width": 110 },
+          { "key": "summary", "label": "Summary", "width": 360 }
+        ]
+      },
+      {
+        "type": "conversation-feed",
+        "key": "roomFeed",
+        "label": "Room Feed"
+      },
+      {
+        "type": "code-blocks",
+        "key": "analysisArtifacts",
+        "label": "Competitive Analysis",
+        "language": "markdown"
+      }
+    ]
+  },
+  "objective": {
+    "required": true,
+    "placeholder": "Describe the product or market you want analyzed"
+  },
+  "handoff": {
+    "inputs": [],
+    "outputs": [
+      { "contract": "competitive_analysis_bundle.v1", "default": true }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Competitive Analysis Room",
+    "typeTag": "COMPETE",
+    "cycleNoun": "Pass",
+    "reportTitle": "Competitive Analysis Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Inspecting the product and market landscape",
+      "fanOut": "Running the current competitive analysis pass",
+      "singleTurn": "Unexpected single-turn flow",
+      "synthesis": "Checking the analysis document",
+      "planning": "Preparing the next pass"
+    },
+    "phaseActivityMessages": {
+      "write": "Analyst is drafting the competitive analysis",
+      "review": "Strategist and critic are reviewing the analysis",
+      "revise": "Analyst is refining the analysis",
+      "complete": "Competitive analysis complete"
+    },
+    "defaultRoster": [
+      { "role": "analyst", "displayName": "Analyst" },
+      { "role": "strategist", "displayName": "Strategist" },
+      { "role": "critic", "displayName": "Critic" }
+    ],
+    "defaultAddRole": "analyst"
+  },
+  "report": {
+    "summaryMetrics": ["analysisCounts"],
+    "table": {
+      "metricKey": "contributionTable",
+      "columns": [
+        { "key": "phase", "label": "Phase", "width": 100 },
+        { "key": "contributor", "label": "Contributor", "width": 160 },
+        { "key": "role", "label": "Role", "width": 120 },
+        { "key": "status", "label": "Status", "width": 110 },
+        { "key": "summary", "label": "Summary", "width": 360 }
+      ]
+    },
+    "codeBlocks": [
+      { "metricKey": "finalArtifacts", "label": "Final Analysis", "language": "markdown" }
+    ]
+  },
+  "cli": {
+    "command": "competitive-analysis-room",
+    "description": "Infer competitors, positioning, and likely acquisition patterns from a project directory",
+    "positionalArgs": [
+      {
+        "name": "brief",
+        "type": "string",
+        "required": true,
+        "description": "Product or market objective for the competitive analysis",
+        "mapTo": "objective"
+      }
+    ],
+    "startParams": [
+      {
+        "name": "project-dir",
+        "type": "directory",
+        "required": true,
+        "description": "Project directory the room should inspect to understand the product",
+        "mapTo": "roomConfig.projectDir"
+      },
+      {
+        "name": "output-dir",
+        "type": "directory",
+        "required": true,
+        "description": "Directory for the canonical competitive analysis markdown file",
+        "mapTo": "roomConfig.outputDir"
+      },
+      {
+        "name": "file-name",
+        "type": "string",
+        "required": true,
+        "default": "competitive-analysis.md",
+        "description": "File name for the canonical competitive analysis markdown file",
+        "mapTo": "roomConfig.fileName"
+      },
+      {
+        "name": "market-focus",
+        "type": "string",
+        "required": false,
+        "description": "Optional hint about the market or customer segment to focus on",
+        "mapTo": "roomConfig.marketFocus"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "analysisPhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      },
+      {
+        "key": "analysisProgress",
+        "label": "Progress",
+        "format": "progress"
+      },
+      {
+        "key": "analysisCounts",
+        "label": "Analysis",
+        "format": "counter-group"
+      }
+    ],
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (pass {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+  },
+  "roomConfigSchema": {
+    "projectDir": {
+      "type": "directory",
+      "label": "Project Directory",
+      "required": true,
+      "description": "Project directory the room should inspect to understand the product."
+    },
+    "outputDir": {
+      "type": "directory",
+      "label": "Output Directory",
+      "required": true,
+      "description": "Directory for the canonical competitive analysis markdown file."
+    },
+    "fileName": {
+      "type": "string",
+      "label": "File Name",
+      "default": "competitive-analysis.md",
+      "description": "File name for the canonical competitive analysis markdown file."
+    },
+    "marketFocus": {
+      "type": "string",
+      "label": "Market Focus",
+      "description": "Optional hint about the market, customer, or category to emphasize."
+    }
+  }
+}
