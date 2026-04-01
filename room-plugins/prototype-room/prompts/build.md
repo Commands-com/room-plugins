@@ -19,11 +19,32 @@ Your job in this build pass:
 - Take a distinct point of view. Do not build the safest generic version if you can articulate a stronger product thesis.
 - If this is a browser or UI prototype, create exactly one canonical HTML entry point for it.
 - Prefer naming the canonical HTML entry `index.html` unless there is a strong reason not to.
+- For prototype stage, prefer a static single-page deliverable rooted at `index.html`, not a scaffolded application.
+- Default to one self-contained `index.html` with inline CSS and inline JavaScript when possible.
+- Do not scaffold Vite, React, Next.js, routing, package managers, build steps, or framework boilerplate unless the objective explicitly requires framework-specific behavior that cannot be shown in a static prototype.
+- Do not create `src/`, `package.json`, `node_modules`, TypeScript app structure, or multi-file app architecture just to make the prototype feel more “real.”
+- If you need supporting assets, keep them minimal and adjacent to `index.html`; the prototype should still be understandable and launchable by opening the HTML file directly.
+- If the objective does not call for a strong stylistic period or brand world, default to a contemporary product aesthetic rather than an editorial or heritage one.
+- Prefer modern sans-serif typography and crisp UI spacing. Avoid defaulting to old-style serif display fonts unless the concept specifically calls for them.
+- Avoid repeatedly falling back to sepia, bronze, brown, parchment, or gold-heavy palettes unless the product concept explicitly supports that mood.
+- Prefer cleaner neutrals, sharper contrast, restrained accent colors, and layouts that feel current, digital, and product-oriented.
+- If this is a frontend or product UI prototype, treat design quality as part of the competition, not decoration.
+- Use your own platform/model taste as an advantage. Do not converge on the same generic SaaS dashboard shape as everyone else.
+- Commit to a clear aesthetic direction and execute it intentionally.
+- Push on:
+  - typography with character
+  - strong visual hierarchy
+  - a memorable color system
+  - layout composition that feels designed, not default
+  - polished motion or interaction moments when they help
+- Avoid generic AI-looking choices such as timid layouts, default-feeling fonts, or cliché gradient-on-white styling.
 - If a seed concept context is present above, stay within that concept. Do not invent a different business or product thesis.
 - Compete on execution of the concept, not on changing the concept itself.
 - Keep the summary file updated with:
   - what you built
   - the canonical HTML entry point
+  - the chosen visual direction
+  - the interaction model
   - key files
   - how to open, run, or inspect it
   - main design decisions
@@ -33,12 +54,14 @@ Your job in this build pass:
   - next bets
 
 Constraints:
-- You may create any structure you need inside your own directory.
+- You may create only the minimum structure needed inside your own directory.
 - Do not rename your prototype directory.
 - The summary file must exist by the end of this pass.
 - Record the canonical HTML entry in `## Entry Point` in the summary file. Use a relative path like `index.html` when possible.
+- If this is a frontend/UI prototype, record `## Visual Direction` and `## Interaction Model` explicitly in the summary file.
 - Optimize for something a reviewer could actually compare against peers, not just a placeholder scaffold.
 - Prefer explicit markdown sections when possible, especially `## Design Decisions`, `## Constraints`, `## Open Questions`, and `## Next Bets`.
+- Assume the reviewer will open `index.html` directly from disk first. Optimize for that path to work without install or build commands.
 
 When you respond, summarize:
 ## Result

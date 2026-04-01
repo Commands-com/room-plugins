@@ -148,12 +148,16 @@ test('prototype room runs multi-cycle build, review, synthesize, and improve acr
     const startDecision = plugin.onRoomStart(ctx);
     assert.equal(startDecision.type, 'fan_out');
     assert.deepEqual(startDecision.targets.map((target) => target.agentId), ['openai_1', 'claude_1', 'gemini_1']);
+    assert.match(startDecision.targets[0].message, /design quality as part of the competition/i);
+    assert.match(startDecision.targets[0].message, /clear aesthetic direction/i);
 
     const initialState = ctx.getState();
     assert.deepEqual(initialState.participants.map((participant) => participant.prototypeKey), ['openai', 'claude', 'gemini']);
     const seededReadme = await readFile(path.join(outputDir, 'openai', 'README.md'), 'utf8');
     assert.match(seededReadme, /## Prototype Thesis/);
     assert.match(seededReadme, /## What I Built/);
+    assert.match(seededReadme, /## Visual Direction/);
+    assert.match(seededReadme, /## Interaction Model/);
 
     await writePrototypeFiles(ctx, 'openai', {
       'README.md': '# OpenAI Prototype\n\nA bold dashboard-first prototype with live pipeline cards.',

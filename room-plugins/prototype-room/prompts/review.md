@@ -23,6 +23,12 @@ Your job in this review pass:
 - Compare peers against each other and against the objective, not in isolation.
 - If a seed concept context is present above, review peers on how well they execute that concept, not on whether they invented a different concept.
 - Score each peer prototype on a 1-10 scale where 10 means "strongest current direction for the objective."
+- If this is a frontend/UI prototype, explicitly evaluate:
+  - visual direction and distinctiveness
+  - typography and hierarchy
+  - interaction quality
+  - whether the interface feels intentionally designed or generic
+- Penalize prototypes that are structurally competent but visually anonymous.
 
 Respond using this exact structure for every peer:
 
