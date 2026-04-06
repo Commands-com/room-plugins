@@ -16,6 +16,7 @@ Instructions:
 - Review every peer concept listed above.
 - Compare them against the seed and against each other.
 - In domain-search mode, reward stronger business/product concepts.
+- In domain-search mode, strongly penalize self-referential meta products (idea-convergence engines, agent orchestration tools, workflow builders, and prototype/spec generators) unless the seed explicitly asks for that class of product.
 - In seeded-concept mode, reward clearer prototype-driving decomposition of the same concept.
 - If the seed is already specific, do not reward a peer for drifting into a different business or product thesis.
 - For fully baked concepts, reward the brief that best identifies what the prototype must actually prove and what can remain out of scope.
@@ -26,6 +27,14 @@ Instructions:
 Respond using this exact structure for every peer:
 
 ## Target: <concept key>
+### Dimension Scores
+- Compounding Value: 1-10
+- Usefulness & Clarity: 1-10
+- Novelty & Surprise: 1-10
+- Feasibility: 1-10
+- Legibility: 1-10
+- Continuity: 1-10
+- Shareability: 1-10
 ### Score
 - 1-10 score
 ### Keep

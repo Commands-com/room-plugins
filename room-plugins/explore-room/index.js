@@ -27,6 +27,31 @@ const TEXT_LIMITS = {
 };
 
 const NONE_KEYS = new Set(['none', 'none yet', 'n a', 'na', 'nothing', 'nope']);
+const DECISION_DIMENSIONS = Object.freeze([
+  Object.freeze({ id: 'compoundingValue', label: 'Compounding Value', aliases: ['compounding value', 'compounding_value', 'compounding'] }),
+  Object.freeze({ id: 'usefulnessClarity', label: 'Usefulness & Clarity', aliases: ['usefulness clarity', 'usefulness & clarity', 'usefulness_clarity', 'usefulness', 'clarity'] }),
+  Object.freeze({ id: 'noveltySurprise', label: 'Novelty & Surprise', aliases: ['novelty surprise', 'novelty & surprise', 'novelty_surprise', 'novelty', 'surprise'] }),
+  Object.freeze({ id: 'feasibility', label: 'Feasibility', aliases: ['feasibility'] }),
+  Object.freeze({ id: 'legibility', label: 'Legibility', aliases: ['legibility'] }),
+  Object.freeze({ id: 'continuity', label: 'Continuity', aliases: ['continuity'] }),
+  Object.freeze({ id: 'shareability', label: 'Shareability', aliases: ['shareability', 'shareable', 'shareable potential'] }),
+]);
+
+const DIMENSION_ALIAS_TO_ID = new Map(
+  DECISION_DIMENSIONS.flatMap((dimension) => [
+    [canonicalDimensionKey(dimension.label), dimension.id],
+    ...dimension.aliases.map((alias) => [canonicalDimensionKey(alias), dimension.id]),
+  ]),
+);
+
+function canonicalDimensionKey(value) {
+  return safeTrim(value, 200)
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[`'".,!?()[\]{}:;/\\_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function safeTrim(value, maxLen = 2000) {
   return typeof value === 'string' ? value.trim().slice(0, maxLen) : '';
@@ -152,7 +177,7 @@ function buildSeedGuidance(seedMode) {
 
   return [
     'Treat the seed as a space to search.',
-    'Your job is to find the single strongest concept direction worth sending into Prototype Room next.',
+    'Your job is to find the single best product concept worth sending into Prototype Room next.',
     'Choose the best business/product concept, then make the prototype-driving components explicit.',
   ].join(' ');
 }
@@ -465,6 +490,106 @@ function sectionToScore(lines) {
   return match ? Number(match[1]) : null;
 }
 
+function parseDimensionScores(lines) {
+  const scores = {};
+  for (const line of Array.isArray(lines) ? lines : []) {
+    const text = safeTrim(
+      String(line ?? '')
+        .replace(/^[-*+]\s+/, '')
+        .replace(/^\d+\.\s+/, ''),
+      240,
+    );
+    if (!text) continue;
+
+    const match = text.match(/^([^:—-]+?)\s*(?::|—|-)\s*(.+)$/);
+    if (!match) continue;
+
+    const dimensionId = DIMENSION_ALIAS_TO_ID.get(canonicalDimensionKey(match[1]));
+    if (!dimensionId) continue;
+
+    const scoreMatch = String(match[2]).match(/\b(10|[1-9])(?:\.\d+)?\b/);
+    if (!scoreMatch) continue;
+    scores[dimensionId] = Number(scoreMatch[1]);
+  }
+
+  return scores;
+}
+
+function averageNumbers(values) {
+  const numeric = values.filter((value) => typeof value === 'number' && Number.isFinite(value));
+  if (numeric.length === 0) return null;
+  return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+}
+
+function toRoundedNumber(value, digits = 2) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Number(value.toFixed(digits))
+    : null;
+}
+
+function resolveOverallReviewScore(review) {
+  if (typeof review?.score === 'number' && Number.isFinite(review.score)) {
+    return review.score;
+  }
+  return averageNumbers(Object.values(review?.dimensionScores || {}));
+}
+
+function buildDimensionAverageSummary(reviews) {
+  return Object.fromEntries(DECISION_DIMENSIONS.map((dimension) => {
+    const values = reviews
+      .map((review) => review?.dimensionScores?.[dimension.id])
+      .filter((value) => typeof value === 'number' && Number.isFinite(value));
+    return [dimension.id, {
+      label: dimension.label,
+      average: toRoundedNumber(averageNumbers(values)),
+      reviewCount: values.length,
+    }];
+  }));
+}
+
+function inferModelFamilyFromFields(fields) {
+  const text = fields.filter(Boolean).join(' ').toLowerCase();
+  if (/(openai|gpt)/.test(text)) return 'gpt';
+  if (/(anthropic|claude)/.test(text)) return 'claude';
+  if (/(google|gemini)/.test(text)) return 'gemini';
+  return '';
+}
+
+function inferJudgeLens(participant) {
+  const text = [
+    participant?.displayName,
+    participant?.profile?.name,
+    participant?.profile?.model,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (text.includes('gardener')) return 'gardener';
+  if (text.includes('visitor')) return 'visitor';
+  if (text.includes('explorer')) return 'explorer';
+  return null;
+}
+
+function buildJudgeMetadata(participant) {
+  if (!participant) return null;
+  const provider = safeTrim(participant?.profile?.provider, 80) || null;
+  const model = safeTrim(participant?.profile?.model, 120) || null;
+  const modelFamily = inferModelFamilyFromFields([
+    participant.displayName,
+    participant?.profile?.name,
+    provider,
+    model,
+    participant.agentId,
+  ]) || null;
+
+  return {
+    agentId: participant.agentId,
+    displayName: participant.displayName,
+    conceptKey: participant.conceptKey,
+    modelFamily,
+    provider,
+    model,
+    lens: inferJudgeLens(participant),
+  };
+}
+
 function parseReviewTargets(responseText, state) {
   const text = String(responseText || '').replace(/\r\n/g, '\n');
   const targetMatches = Array.from(text.matchAll(/^##\s*Target:\s*(.+)$/gim));
@@ -478,10 +603,12 @@ function parseReviewTargets(responseText, state) {
     const sections = splitHeadingSections(block, '###');
     const participant = findParticipantForTarget(state, targetName);
     if (!participant) return null;
+    const dimensionScores = parseDimensionScores(sections.get('dimension scores'));
     return {
       targetAgentId: participant.agentId,
       targetConceptKey: participant.conceptKey,
       score: sectionToScore(sections.get('score')),
+      dimensionScores,
       keep: sectionToItems(sections.get('keep'), 10, 400),
       mustChange: sectionToItems(sections.get('must change'), 10, 400),
       risks: sectionToItems(sections.get('risks'), 10, 400),
@@ -516,16 +643,44 @@ function synthesizeConcepts(state) {
   const concepts = getLatestConcepts(state);
   const reviewSummary = summarizeReviewRound(ensureRound(state, PHASES.REVIEW, state.cycleCount), state);
   const ranking = concepts.map((concept) => {
-    const reviews = reviewSummary.parsed.flatMap((entry) => entry.targets)
-      .filter((target) => target.targetAgentId === concept.agentId);
-    const scored = reviews.filter((review) => typeof review.score === 'number');
-    const averageScore = scored.length > 0
-      ? scored.reduce((sum, review) => sum + review.score, 0) / scored.length
-      : 0;
+    const reviews = reviewSummary.parsed.flatMap((entry) => (
+      entry.targets
+        .filter((target) => target.targetAgentId === concept.agentId)
+        .map((target) => ({
+          ...target,
+          reviewer: buildJudgeMetadata(
+            state.participants.find((participant) => participant.agentId === entry.reviewer.agentId)
+            || entry.reviewer,
+          ),
+        }))
+    ));
+    const scored = reviews
+      .map((review) => ({
+        ...review,
+        resolvedScore: resolveOverallReviewScore(review),
+      }))
+      .filter((review) => typeof review.resolvedScore === 'number');
+    const averageScore = averageNumbers(scored.map((review) => review.resolvedScore)) || 0;
+    const dimensionAverages = buildDimensionAverageSummary(reviews);
     return {
       ...concept,
       averageScore,
       reviewCount: scored.length,
+      dimensionAverages,
+      reviewerBreakdown: reviews.map((review) => ({
+        reviewer: review.reviewer,
+        overallScore: toRoundedNumber(resolveOverallReviewScore(review)),
+        dimensionScores: Object.fromEntries(DECISION_DIMENSIONS.map((dimension) => [
+          dimension.id,
+          typeof review.dimensionScores?.[dimension.id] === 'number'
+            ? review.dimensionScores[dimension.id]
+            : null,
+        ])),
+        keep: review.keep,
+        mustChange: review.mustChange,
+        risks: review.risks,
+        whyItWinsOrLoses: review.whyItWinsOrLoses,
+      })),
       keep: mergeUnique(reviews.flatMap((review) => review.keep), 10),
       mustChange: mergeUnique(reviews.flatMap((review) => review.mustChange), 10),
       risks: mergeUnique(reviews.flatMap((review) => review.risks), 10),
@@ -588,9 +743,41 @@ function buildSynthesisMarkdown(state, ranked) {
   ].join('\n');
 }
 
+function buildCandidateRecord(entry) {
+  return {
+    rank: entry.rank,
+    id: entry.conceptKey,
+    title: entry.title,
+    oneLiner: entry.oneLiner,
+    targetUser: entry.targetUser,
+    problem: entry.problem,
+    coreValue: entry.coreValue,
+    requiredUserFlows: entry.requiredUserFlows,
+    prototypeFocus: entry.prototypeFocus,
+    nonMockFunctionality: entry.nonMockFunctionality,
+    implementationBoundaries: entry.implementationBoundaries,
+    risks: entry.risks,
+    openQuestions: entry.openQuestions,
+    whyThisCouldWin: entry.whyThisCouldWin,
+    keep: entry.keep,
+    mustChange: entry.mustChange,
+    whyItWinsOrLoses: entry.whyItWinsOrLoses,
+    aggregateScores: {
+      overall: toRoundedNumber(entry.averageScore),
+      reviewCount: entry.reviewCount,
+      dimensions: entry.dimensionAverages,
+    },
+    reviewerBreakdown: entry.reviewerBreakdown,
+  };
+}
+
 function buildConceptBundle(state) {
   const synthesis = state.synthesis || synthesizeConcepts(state);
   const selected = synthesis.selected;
+  const judgePanel = state.participants
+    .map((participant) => buildJudgeMetadata(participant))
+    .filter(Boolean);
+  const candidates = synthesis.ranked.map((entry) => buildCandidateRecord(entry));
   if (!selected) {
     return {
       contract: 'concept_bundle.v1',
@@ -609,7 +796,19 @@ function buildConceptBundle(state) {
       },
       selectedConcept: null,
       alternatives: [],
+      candidates: [],
       leaderboard: [],
+      judgePanel,
+      decision: {
+        selectedConceptId: null,
+        selectedConceptTitle: null,
+        scoringDimensions: DECISION_DIMENSIONS.map((dimension) => ({
+          id: dimension.id,
+          label: dimension.label,
+        })),
+        reviewBlockCount: synthesis.reviewBlockCount || 0,
+        candidateCount: 0,
+      },
       provenance: {
         roomType: 'explore_room',
         generatedAt: new Date().toISOString(),
@@ -646,6 +845,11 @@ function buildConceptBundle(state) {
       mode: state.config.seedMode,
       conceptId: selected.conceptKey,
       conceptTitle: selected.title,
+      rationale: mergeUnique([
+        selected.whyThisCouldWin,
+        ...selected.whyItWinsOrLoses,
+        ...selected.keep,
+      ], 6),
     },
     selectedConcept: {
       id: selected.conceptKey,
@@ -662,14 +866,26 @@ function buildConceptBundle(state) {
       openQuestions: selected.openQuestions,
       whyThisCouldWin: selected.whyThisCouldWin,
       improvementTargets: selected.mustChange,
+      aggregateScores: {
+        overall: toRoundedNumber(selected.averageScore),
+        reviewCount: selected.reviewCount,
+        dimensions: selected.dimensionAverages,
+      },
+      reviewerBreakdown: selected.reviewerBreakdown,
     },
     alternatives: synthesis.ranked.slice(1).map((entry) => ({
       id: entry.conceptKey,
       title: entry.title,
       oneLiner: entry.oneLiner,
       averageScore: Number(entry.averageScore.toFixed(2)),
+      aggregateScores: {
+        overall: toRoundedNumber(entry.averageScore),
+        reviewCount: entry.reviewCount,
+        dimensions: entry.dimensionAverages,
+      },
       whyItLost: entry.mustChange[0] || entry.risks[0] || '',
     })),
+    candidates,
     leaderboard: synthesis.ranked.map((entry) => ({
       rank: entry.rank,
       conceptId: entry.conceptKey,
@@ -678,7 +894,19 @@ function buildConceptBundle(state) {
       reviewCount: entry.reviewCount,
       mustChangeCount: entry.mustChange.length,
       riskCount: entry.risks.length,
+      dimensionAverages: entry.dimensionAverages,
     })),
+    judgePanel,
+    decision: {
+      selectedConceptId: selected.conceptKey,
+      selectedConceptTitle: selected.title,
+      scoringDimensions: DECISION_DIMENSIONS.map((dimension) => ({
+        id: dimension.id,
+        label: dimension.label,
+      })),
+      reviewBlockCount: synthesis.reviewBlockCount,
+      candidateCount: candidates.length,
+    },
     provenance: {
       roomType: 'explore_room',
       generatedAt: new Date().toISOString(),
