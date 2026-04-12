@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 
-import { createPlugin } from '../room-plugins/spec-room/index.js';
+import { createPlugin, manifest } from '../room-plugins/spec-room/index.js';
 
 function makeMockCtx(overrides = {}) {
   let state = null;
@@ -283,6 +283,20 @@ test('spec room runs a write-review-revise-review loop and produces a final spec
   } finally {
     await rm(outputDir, { recursive: true, force: true });
   }
+});
+
+test('spec room declares concept and prototype bundles as optional handoff inputs', () => {
+  const inputs = manifest?.handoff?.inputs || [];
+  assert.deepEqual(inputs.find((entry) => entry.contract === 'concept_bundle.v1'), {
+    contract: 'concept_bundle.v1',
+    required: false,
+    multiple: false,
+  });
+  assert.deepEqual(inputs.find((entry) => entry.contract === 'prototype_bundle.v1'), {
+    contract: 'prototype_bundle.v1',
+    required: false,
+    multiple: false,
+  });
 });
 
 test('spec room carries selected prototype handoff context into the authoring prompt', async () => {

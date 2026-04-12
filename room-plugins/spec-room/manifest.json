@@ -95,6 +95,7 @@
   },
   "handoff": {
     "inputs": [
+      { "contract": "concept_bundle.v1", "required": false, "multiple": false },
       { "contract": "prototype_bundle.v1", "required": false, "multiple": false }
     ],
     "outputs": [
