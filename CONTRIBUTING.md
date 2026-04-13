@@ -24,7 +24,7 @@ Usually not a fit:
 
 Please keep contributions self-contained, honest, and easy to verify.
 
-- A plugin should live entirely inside its own folder under `room-plugins/`, unless it intentionally depends on a documented shared library in this repo.
+- A plugin should live entirely inside its own folder under `room-plugins/`, unless it intentionally depends on a documented shared library in this repo such as `room-plugins/sql-optimizer-core` or `room-plugins/core-room-support`.
 - Do not add hidden dependencies on another plugin's private files.
 - Keep manifests and runtime behavior aligned with the documented contract.
 - Prefer clear, boring installation and validation steps over clever setup.

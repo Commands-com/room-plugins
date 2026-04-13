@@ -6,8 +6,10 @@ If you follow this file, you can build a room plugin from this repo without acce
 
 ## 1. Runtime Loading Model
 
-- Built-in room types are always present.
-- External room types are additive (they do not replace built-ins).
+- Non-overridable built-in room types are always present.
+- Most external room types are additive.
+- Some plugins in this repo intentionally mirror bundled-default room types shipped by Commands Desktop.
+- On compatible desktop builds, those mirrored bundled-default room types may override the shipped bundled copy while still not replacing non-overridable built-ins such as `control_room`.
 - Each room run gets a fresh plugin instance via `createPlugin()`.
 - External plugins are loaded from:
   - `~/.commands-com/workspace/room-plugins`

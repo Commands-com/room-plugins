@@ -1,0 +1,193 @@
+{
+  "id": "break_room",
+  "name": "Break Room",
+  "version": "1.0.0",
+  "orchestratorType": "break_room",
+  "description": "Live multi-agent conversational simulator for open-ended ideation",
+  "supportsQuorum": false,
+  "roles": {
+    "required": [
+      "worker"
+    ],
+    "optional": [],
+    "forbidden": [
+      "implementer",
+      "reviewer"
+    ],
+    "minCount": {
+      "worker": 2
+    }
+  },
+  "limits": {
+    "maxCycles": {
+      "default": 5,
+      "min": 1,
+      "max": 50
+    },
+    "maxTurns": {
+      "default": 40,
+      "min": 1,
+      "max": 1000
+    },
+    "maxDurationMs": {
+      "default": 10800000,
+      "max": 43200000
+    },
+    "maxFailures": {
+      "default": 3
+    },
+    "agentTimeoutMs": {
+      "default": 1800000
+    },
+    "pluginHookTimeoutMs": {
+      "default": 30000
+    },
+    "llmTimeoutMs": {
+      "default": 60000,
+      "max": 300000
+    },
+    "turnFloorRole": "worker",
+    "turnFloorFormula": "1 + N"
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "dashboard": {
+    "panels": [
+      {
+        "type": "counter-group",
+        "key": "bubbleSummary",
+        "label": "Bubbles",
+        "layout": "row",
+        "counters": [
+          {
+            "key": "completed",
+            "label": "Done",
+            "color": "green"
+          },
+          {
+            "key": "remaining",
+            "label": "Left",
+            "color": "yellow"
+          }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "roundProgress",
+        "label": "Round Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "conversation-feed",
+        "key": "conversationFeed",
+        "label": "Conversation"
+      },
+      {
+        "type": "table",
+        "key": "speakerStats",
+        "label": "Speaker Stats",
+        "sortable": true,
+        "columns": [
+          {
+            "key": "displayName",
+            "label": "Name"
+          },
+          {
+            "key": "bubbleCount",
+            "label": "Bubbles",
+            "width": 70
+          },
+          {
+            "key": "pct",
+            "label": "%",
+            "width": 60
+          },
+          {
+            "key": "addressed",
+            "label": "Addressed",
+            "width": 80
+          }
+        ]
+      }
+    ]
+  },
+  "display": {
+    "typeLabel": "Break Room",
+    "typeTag": "BR",
+    "cycleNoun": "Round",
+    "reportTitle": "Break Room Transcript",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "fanOut": "Conversation in progress",
+      "singleTurn": "Participant speaking",
+      "synthesis": "Wrapping up",
+      "planning": "Starting conversation..."
+    },
+    "defaultRoster": [
+      {
+        "role": "worker",
+        "displayName": "Participant 1"
+      },
+      {
+        "role": "worker",
+        "displayName": "Participant 2"
+      },
+      {
+        "role": "worker",
+        "displayName": "Participant 3"
+      }
+    ],
+    "defaultAddRole": "worker"
+  },
+  "report": {
+    "summaryMetrics": [
+      "bubbleSummary"
+    ],
+    "table": {
+      "metricKey": "speakerStats",
+      "columns": [
+        {
+          "key": "displayName",
+          "label": "Name"
+        },
+        {
+          "key": "bubbleCount",
+          "label": "Bubbles",
+          "width": 70
+        },
+        {
+          "key": "pct",
+          "label": "%",
+          "width": 60
+        },
+        {
+          "key": "addressed",
+          "label": "Addressed",
+          "width": 80
+        }
+      ]
+    }
+  },
+  "configSchema": {
+    "rounds": {
+      "type": "integer",
+      "min": 1,
+      "max": 50,
+      "default": 5
+    },
+    "thirdParticipantChimePct": {
+      "type": "integer",
+      "min": 0,
+      "max": 45,
+      "default": 25
+    },
+    "extraParticipantDecayExponent": {
+      "type": "number",
+      "min": 1,
+      "max": 3,
+      "default": 1.5
+    }
+  }
+}

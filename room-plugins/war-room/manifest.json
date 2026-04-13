@@ -1,0 +1,275 @@
+{
+  "id": "war_room",
+  "name": "Implementation Room",
+  "version": "1.0.0",
+  "orchestratorType": "war_room",
+  "description": "Parallel task execution with optional quorum decisions",
+  "supportsQuorum": true,
+  "dashboard": {
+    "panels": [
+      {
+        "type": "phase",
+        "key": "currentPhase",
+        "label": "Phase",
+        "phases": [
+          "discovery",
+          "planning",
+          "executing",
+          "complete"
+        ]
+      },
+      {
+        "type": "counter-group",
+        "key": "taskSummary",
+        "label": "Tasks",
+        "layout": "row",
+        "counters": [
+          {
+            "key": "pending",
+            "label": "Pending",
+            "color": "gray"
+          },
+          {
+            "key": "inProgress",
+            "label": "Active",
+            "color": "blue"
+          },
+          {
+            "key": "done",
+            "label": "Done",
+            "color": "green"
+          },
+          {
+            "key": "blocked",
+            "label": "Blocked",
+            "color": "red"
+          }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "taskProgress",
+        "label": "Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "agent-status",
+        "key": "workerStatus",
+        "label": "Workers",
+        "states": [
+          "discovering",
+          "idle",
+          "working",
+          "done",
+          "unavailable"
+        ]
+      },
+      {
+        "type": "table",
+        "key": "taskBoard",
+        "label": "Task Board",
+        "columns": [
+          {
+            "key": "taskNum",
+            "label": "#",
+            "width": 30
+          },
+          {
+            "key": "title",
+            "label": "Task"
+          },
+          {
+            "key": "assignedTo",
+            "label": "Worker"
+          },
+          {
+            "key": "status",
+            "label": "Status",
+            "width": 90
+          },
+          {
+            "key": "dependencies",
+            "label": "Depends On",
+            "width": 100
+          },
+          {
+            "key": "completedInCycle",
+            "label": "Cycle",
+            "width": 50
+          }
+        ],
+        "sortable": true,
+        "filterable": [
+          "status",
+          "assignedTo"
+        ]
+      }
+    ]
+  },
+  "limits": {
+    "maxCycles": {
+      "default": 10
+    },
+    "maxTurns": {
+      "default": 80,
+      "min": 3,
+      "max": 1000
+    },
+    "maxDurationMs": {
+      "default": 10800000,
+      "max": 43200000
+    },
+    "maxFailures": {
+      "default": 5
+    },
+    "agentTimeoutMs": {
+      "default": 1800000,
+      "max": 10800000
+    },
+    "pluginHookTimeoutMs": {
+      "default": 300000,
+      "max": 600000
+    },
+    "llmTimeoutMs": {
+      "default": 300000,
+      "max": 600000
+    },
+    "turnFloorRole": "worker",
+    "turnFloorFormula": "2 + N"
+  },
+  "roles": {
+    "required": [
+      "worker"
+    ],
+    "optional": [],
+    "forbidden": [
+      "implementer",
+      "reviewer"
+    ],
+    "minCount": {
+      "worker": 1
+    }
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "handoff": {
+    "inputs": [
+      {
+        "contract": "spec_bundle.v1",
+        "required": false,
+        "multiple": false
+      },
+      {
+        "contract": "review_findings.v1",
+        "required": false,
+        "multiple": false
+      }
+    ],
+    "outputs": [
+      {
+        "contract": "implementation_bundle.v1",
+        "default": true
+      }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "roomConfigSchema": {
+    "elasticWorkers": {
+      "type": "boolean",
+      "label": "Use Elastic Workers",
+      "default": false,
+      "description": "Allow the runtime to add temporary replicas of existing local workers when the planner requests extra capacity."
+    },
+    "maxDynamicWorkers": {
+      "type": "integer",
+      "label": "Max Dynamic Workers",
+      "default": 0,
+      "min": 0,
+      "max": 8,
+      "description": "Maximum number of temporary worker replicas the runtime may add during this room run."
+    },
+    "maxReplicasPerWorker": {
+      "type": "integer",
+      "label": "Max Replicas Per Worker",
+      "default": 1,
+      "min": 1,
+      "max": 4,
+      "description": "Maximum number of temporary replicas allowed for any one source worker."
+    },
+    "maxParallelWrites": {
+      "type": "integer",
+      "label": "Max Parallel Writes",
+      "default": 1,
+      "min": 1,
+      "max": 8,
+      "description": "Maximum number of write tasks that may run in the same dispatch window. Read-only tasks can still run in parallel."
+    },
+    "isolatedWriteWorktrees": {
+      "type": "boolean",
+      "label": "Use Isolated Write Worktrees",
+      "default": true,
+      "description": "Run write tasks in branch-backed git worktrees and merge them back through a runtime-owned squash merge."
+    }
+  },
+  "display": {
+    "typeLabel": "Implementation Room",
+    "typeTag": "WR",
+    "cycleNoun": "Execution",
+    "reportTitle": "Implementation Room Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "discovery": "Workers exploring the codebase",
+      "fanOut": "Workers executing tasks",
+      "singleTurn": "Worker executing task",
+      "synthesis": "Processing results",
+      "planning": "Planning tasks"
+    },
+    "defaultRoster": [
+      {
+        "role": "worker",
+        "displayName": "Worker 1"
+      },
+      {
+        "role": "worker",
+        "displayName": "Worker 2"
+      }
+    ],
+    "defaultAddRole": "worker"
+  },
+  "report": {
+    "summaryMetrics": [
+      "taskBoard"
+    ],
+    "table": {
+      "metricKey": "taskBoard",
+      "columns": [
+        {
+          "key": "title",
+          "label": "Task"
+        },
+        {
+          "key": "assignedTo",
+          "label": "Worker",
+          "width": 120
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "width": 80
+        },
+        {
+          "key": "dependencies",
+          "label": "Deps",
+          "width": 100
+        },
+        {
+          "key": "completedInCycle",
+          "label": "Cycle",
+          "width": 60
+        }
+      ]
+    }
+  }
+}

@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/7c6ddcd6-45db-4b71-9838-c8f262bd4e7f
 | **SHA-256 integrity** | Allowlist with optional hash pins, safe in-tree symlink hashing, dev-only bypass |
 | **Declarative rooms** | Define phases, dispatch, and dashboard in `room.yaml` — family runtimes handle orchestration |
 | **Copy-and-go** | Clone `template-room`, edit manifest and handler, reinstall |
-| **Additive** | External room types extend built-ins — never override |
+| **Bundled-default aware** | Includes additive plugins plus source-of-truth copies of bundled default rooms |
 
 ## Requirements
 
@@ -116,8 +116,9 @@ Restart Commands Desktop and create a room using your `orchestratorType`.
 
 | Rule | Detail |
 |---|---|
-| Built-in room types | Always load |
-| External room types | Additive — cannot override built-ins |
+| Non-overridable built-ins | Always load |
+| Bundled-default room types | Repo copies can override the shipped bundled copy on compatible desktop builds |
+| Other external room types | Additive |
 | Allowlist | Plugin directory names must be listed |
 | Integrity | If allowlist entry includes `sha256`, enforced at load time |
 | File checks | `manifest.json` and `index.js` must be regular files (no symlinks) |
@@ -134,11 +135,16 @@ In Desktop: **Settings > Developer > Dev Mode + Trust All Plugins**.
 
 ```
 room-plugins/template-room                  Classic reference implementation (copy to create new)
+room-plugins/break-room                     Classic conversational simulator room
+room-plugins/review-cycle                  Classic multi-agent review/convergence room
+room-plugins/war-room                      Classic implementation/execution room
+room-plugins/ui-ux-testing                 Classic UI workflow testing room
 room-plugins/spec-room                      Classic multi-pass spec authoring room
 room-plugins/fft-autotune                   Advanced empirical search room (classic)
 room-plugins/postgres-query-optimizer       Declarative room (Docker harness, index + rewrite strategies)
 room-plugins/redshift-query-optimizer       Declarative room (live cluster, rewrite + advisory strategies)
 room-plugins/sql-optimizer-core             Shared library for SQL optimizer plugins
+room-plugins/core-room-support              Shared support for ported core-default room plugins
 scripts/dev-config-spec-room.json           Example config for running Spec Room locally
 scripts/dev-runner.js                       Dev harness — run plugins locally with Ollama or fixtures
 scripts/install-room-plugins.sh             Bash installer (macOS/Linux)

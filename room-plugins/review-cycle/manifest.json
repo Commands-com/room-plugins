@@ -1,0 +1,325 @@
+{
+  "id": "review_cycle",
+  "name": "Review Cycle",
+  "version": "1.0.0",
+  "orchestratorType": "review_cycle",
+  "description": "Convergence-based code review with 1 implementer + N reviewers",
+  "supportsQuorum": false,
+  "dashboard": {
+    "panels": [
+      {
+        "type": "counter-group",
+        "key": "issueSummary",
+        "label": "Issues",
+        "layout": "row",
+        "counters": [
+          {
+            "key": "p1Open",
+            "label": "P1 Open",
+            "color": "red"
+          },
+          {
+            "key": "p2Open",
+            "label": "P2 Open",
+            "color": "orange"
+          },
+          {
+            "key": "p3Open",
+            "label": "P3 Open",
+            "color": "yellow"
+          },
+          {
+            "key": "totalResolved",
+            "label": "Resolved",
+            "color": "green"
+          }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "cycleProgress",
+        "label": "Cycle Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "phase",
+        "key": "currentPhase",
+        "label": "Phase",
+        "phases": [
+          "reviewing",
+          "synthesizing",
+          "implementing",
+          "converging"
+        ]
+      },
+      {
+        "type": "bar-chart",
+        "key": "convergenceTrend",
+        "label": "Issues by Cycle",
+        "series": [
+          {
+            "key": "p1",
+            "label": "P1",
+            "color": "red"
+          },
+          {
+            "key": "p2",
+            "label": "P2",
+            "color": "orange"
+          },
+          {
+            "key": "p3",
+            "label": "P3",
+            "color": "yellow"
+          },
+          {
+            "key": "p4",
+            "label": "Nit",
+            "color": "blue"
+          }
+        ]
+      },
+      {
+        "type": "agent-status",
+        "key": "reviewerStatus",
+        "label": "Reviewers",
+        "states": [
+          "initial_review",
+          "has_open_issues",
+          "clean_review",
+          "done",
+          "withdrawn",
+          "responding",
+          "timeout"
+        ]
+      },
+      {
+        "type": "table",
+        "key": "issueLog",
+        "label": "Issue Log",
+        "columns": [
+          {
+            "key": "severity",
+            "label": "Sev",
+            "width": 40
+          },
+          {
+            "key": "title",
+            "label": "Issue"
+          },
+          {
+            "key": "reportedBy",
+            "label": "Reported By"
+          },
+          {
+            "key": "status",
+            "label": "Status",
+            "width": 80
+          },
+          {
+            "key": "resolvedInCycle",
+            "label": "Resolved",
+            "width": 70
+          }
+        ],
+        "sortable": true,
+        "filterable": [
+          "severity",
+          "status"
+        ]
+      }
+    ]
+  },
+  "limits": {
+    "maxCycles": {
+      "default": 5
+    },
+    "maxTurns": {
+      "default": 40,
+      "min": 1,
+      "max": 1000
+    },
+    "llmTimeoutMs": {
+      "default": 60000,
+      "max": 300000
+    },
+    "turnFloorRole": "reviewer",
+    "turnFloorFormula": "1 + N"
+  },
+  "roles": {
+    "required": [
+      "implementer",
+      "reviewer"
+    ],
+    "optional": [],
+    "forbidden": [
+      "worker"
+    ],
+    "minCount": {
+      "implementer": 1,
+      "reviewer": 1
+    },
+    "maxCount": {
+      "implementer": 1
+    }
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "handoff": {
+    "inputs": [
+      {
+        "contract": "spec_bundle.v1",
+        "required": false,
+        "multiple": false
+      },
+      {
+        "contract": "implementation_bundle.v1",
+        "required": false,
+        "multiple": false
+      },
+      {
+        "contract": "test_results.v1",
+        "required": false,
+        "multiple": false
+      }
+    ],
+    "outputs": [
+      {
+        "contract": "review_findings.v1",
+        "default": true
+      },
+      {
+        "contract": "spec_bundle.v1"
+      },
+      {
+        "contract": "implementation_bundle.v1"
+      },
+      {
+        "contract": "test_results.v1"
+      }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Review Cycle",
+    "typeTag": "RC",
+    "cycleNoun": "Cycle",
+    "reportTitle": "Review Cycle Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "fanOut": "Review in progress",
+      "singleTurn": "Implementation in progress",
+      "synthesis": "Synthesis in progress",
+      "planning": "Planning..."
+    },
+    "phaseActivityMessages": {
+      "reviewing": "Reviewers reviewing changes",
+      "implementing": "Implementer addressing findings",
+      "synthesizing": "Consolidating review findings"
+    },
+    "defaultRoster": [
+      {
+        "role": "implementer",
+        "displayName": "Implementer"
+      },
+      {
+        "role": "reviewer",
+        "displayName": "Reviewer 1"
+      }
+    ],
+    "defaultAddRole": "reviewer"
+  },
+  "report": {
+    "summaryMetrics": [
+      "issueSummary"
+    ],
+    "table": {
+      "metricKey": "issueLog",
+      "columns": [
+        {
+          "key": "severity",
+          "label": "Sev",
+          "width": 60
+        },
+        {
+          "key": "title",
+          "label": "Issue"
+        },
+        {
+          "key": "reportedBy",
+          "label": "Reported By"
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "width": 80
+        },
+        {
+          "key": "resolvedInCycle",
+          "label": "Resolved",
+          "width": 70
+        }
+      ]
+    }
+  },
+  "cli": {
+    "command": "review-cycle",
+    "description": "Review code changes with multi-agent convergence",
+    "startParams": [],
+    "clientFlags": [
+      {
+        "name": "worktree",
+        "type": "boolean",
+        "behavior": "git-worktree",
+        "required": false,
+        "default": false,
+        "description": "Create isolated git worktree for review"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "behavior": "git-ref",
+        "required": false,
+        "description": "Base commit for worktree (requires --worktree)",
+        "requiresFlag": "worktree"
+      }
+    ],
+    "statusFields": [
+      {
+        "key": "issueSummary",
+        "label": "Issues",
+        "format": "counter-group"
+      },
+      {
+        "key": "currentPhase",
+        "label": "Phase",
+        "format": "text",
+        "extract": "active"
+      }
+    ],
+    "computedStatusFields": [
+      {
+        "name": "openIssues",
+        "label": "Open Issues",
+        "format": "number",
+        "derive": "(metrics.issueSummary.p1Open || 0) + (metrics.issueSummary.p2Open || 0) + (metrics.issueSummary.p3Open || 0)"
+      }
+    ],
+    "exitCodes": {
+      "cycle_limit": 2,
+      "turn_limit": 2,
+      "convergence_with_open_issues": 2
+    },
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (cycle {{cycle}}/{{maxCycles}}, {{openIssues}} open issues){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}  {{openIssues}} open issues{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "startTemplate": "[{{command}}] started: {{roomId}}",
+    "stopTemplate": "[{{command}}] stopping: {{roomId}}",
+    "skill": {
+      "name": "review-cycle",
+      "description": "Run a multi-agent code review",
+      "defaultObjective": "Review the current working directory for correctness, regressions, and missing tests."
+    }
+  }
+}
