@@ -206,13 +206,23 @@
       }
     ],
     "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (cycle {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
-    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "skill": {
+      "name": "prototype-room",
+      "description": "Run a side-by-side prototype bakeoff where each AI builds, reviews, and iteratively improves its own version",
+      "defaultObjective": "Build multiple prototypes of the same objective, review them, and iterate using peer feedback",
+      "contextGathering": {
+        "requiredInputs": ["idea"],
+        "optionalInputs": []
+      }
+    }
   },
   "roomConfigSchema": {
     "outputDir": {
       "type": "directory",
       "label": "Output Directory",
       "required": true,
+      "autoCreate": true,
       "description": "Folder where the room should create one prototype folder per participant."
     },
     "readmeFileName": {

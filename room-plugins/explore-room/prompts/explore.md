@@ -10,10 +10,11 @@ Seed interpretation:
 {{seed_guidance}}
 
 Instructions:
-- Produce exactly one concept direction, not a list of disconnected ideas.
+- Produce exactly one product concept, not a list of disconnected ideas.
 - If the seed is broad, propose the strongest business/product concept in that space.
 - If the seed is already specific, keep the core concept fixed and clarify what matters most for the prototype.
 - If the seed already implies a fairly specific product, prefer refinement over reinvention even in Auto mode.
+- Unless the seed explicitly asks for it, do not choose a self-referential meta product whose main value is brainstorming, concept convergence, agent orchestration, workflow/pipeline building, or prototype/spec generation.
 - For fully baked concepts, focus on prototype-driving decomposition: core surfaces, first-run value, required flows, non-mock functionality, and implementation boundaries.
 - Optimize for what should feed a prototype room next, not for a final technical spec.
 - Be concrete about what users need, what the product does, and what a prototype must prove.

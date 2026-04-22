@@ -3,7 +3,7 @@
   "name": "Explore Room",
   "version": "1.0.0",
   "orchestratorType": "explore_room",
-  "description": "Take a broad domain or specific concept seed, converge on the strongest concept direction, and emit a concept bundle for downstream prototyping",
+  "description": "Take a broad domain or specific concept seed, identify the best product concept to prototype next, and emit a concept bundle for downstream prototyping",
   "supportsQuorum": false,
   "roles": {
     "required": ["explorer"],
@@ -114,14 +114,14 @@
     "reportTitle": "Explore Room Report",
     "activityMessages": {
       "idle": "Waiting...",
-      "discovery": "Exploring concept directions",
+      "discovery": "Exploring product concepts",
       "fanOut": "Running the current explore pass",
       "singleTurn": "Unexpected single-turn flow",
       "synthesis": "Ranking and synthesizing concepts",
       "planning": "Preparing the next phase"
     },
     "phaseActivityMessages": {
-      "explore": "Each participant is proposing a concept direction",
+      "explore": "Each participant is proposing a product concept",
       "review": "Each participant is reviewing peer concepts",
       "synthesize": "The room is ranking and selecting the strongest concept",
       "refine": "Each participant is refining the selected concept",
@@ -154,7 +154,7 @@
   },
   "cli": {
     "command": "explore-room",
-    "description": "Converge on the strongest concept direction from a domain or a specific seeded idea",
+    "description": "Choose the best product concept from a domain or a specific seeded idea",
     "positionalArgs": [
       {
         "name": "seed",
@@ -189,7 +189,16 @@
       }
     ],
     "statusTemplate": "[{{command}}] {{roomId}}: {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
-    "listTemplate": "{{roomId}}  {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+    "listTemplate": "{{roomId}}  {{state}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "skill": {
+      "name": "explore-room",
+      "description": "Explore and rank the best product concept before prototyping",
+      "defaultObjective": "Find the best product concept for the seeded domain or refine a specific seeded concept into a clear prototype-ready direction",
+      "contextGathering": {
+        "requiredInputs": ["seed"],
+        "optionalInputs": []
+      }
+    }
   },
   "roomConfigSchema": {
     "seedMode": {

@@ -96,7 +96,8 @@
   "handoff": {
     "inputs": [
       { "contract": "concept_bundle.v1", "required": false, "multiple": false },
-      { "contract": "prototype_bundle.v1", "required": false, "multiple": false }
+      { "contract": "prototype_bundle.v1", "required": false, "multiple": false },
+      { "contract": "feedback_bundle.v1", "required": false, "multiple": false }
     ],
     "outputs": [
       { "contract": "spec_bundle.v1", "default": true }
@@ -235,7 +236,16 @@
       }
     ],
     "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (pass {{cycle}}/{{maxCycles}}){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
-    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}"
+    "listTemplate": "{{roomId}}  {{state}}  pass {{cycle}}/{{maxCycles}}{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "skill": {
+      "name": "spec-room",
+      "description": "Turn rough ideas into concrete build-ready specs",
+      "defaultObjective": "Turn the provided idea into a concrete, build-ready spec",
+      "contextGathering": {
+        "requiredInputs": ["idea"],
+        "optionalInputs": []
+      }
+    }
   },
   "roomConfigSchema": {
     "deliverableType": {
@@ -278,6 +288,7 @@
     "outputDir": {
       "type": "directory",
       "required": true,
+      "autoCreate": true,
       "label": "Export Directory",
       "description": "Directory chosen in the UI for the canonical spec markdown file."
     },
