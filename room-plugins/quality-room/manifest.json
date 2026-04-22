@@ -1,0 +1,166 @@
+{
+  "id": "quality_room",
+  "name": "Quality Room",
+  "version": "1.0.0",
+  "orchestratorType": "quality_room",
+  "description": "Grade implementation quality from A to F, fix what blocks A, and re-grade until convergence or cycle limit",
+  "supportsQuorum": false,
+  "dashboard": {
+    "panels": [
+      {
+        "type": "counter-group",
+        "key": "qualitySummary",
+        "label": "Grades",
+        "layout": "row",
+        "counters": [
+          { "key": "aCount", "label": "A", "color": "green" },
+          { "key": "bCount", "label": "B", "color": "blue" },
+          { "key": "cCount", "label": "C", "color": "yellow" },
+          { "key": "dCount", "label": "D", "color": "orange" },
+          { "key": "fCount", "label": "F", "color": "red" },
+          { "key": "blockers", "label": "Blockers", "color": "red" }
+        ]
+      },
+      {
+        "type": "progress",
+        "key": "cycleProgress",
+        "label": "Cycle Progress",
+        "format": "{value} / {max}"
+      },
+      {
+        "type": "phase",
+        "key": "currentPhase",
+        "label": "Phase",
+        "phases": ["reviewing", "implementing", "converging"]
+      },
+      {
+        "type": "agent-status",
+        "key": "reviewerStatus",
+        "label": "Reviewers",
+        "states": ["grading", "a_grade", "below_a", "withdrawn"]
+      },
+      {
+        "type": "table",
+        "key": "gradeLog",
+        "label": "Grade Log",
+        "columns": [
+          { "key": "reviewer", "label": "Reviewer", "width": 140 },
+          { "key": "overallGrade", "label": "Overall", "width": 80 },
+          { "key": "correctness", "label": "Correctness", "width": 100 },
+          { "key": "simplicity", "label": "Simplicity", "width": 100 },
+          { "key": "maintainability", "label": "Maintainability", "width": 120 },
+          { "key": "verification", "label": "Verification", "width": 100 },
+          { "key": "scopeDiscipline", "label": "Scope", "width": 90 },
+          { "key": "blockers", "label": "Blockers", "width": 80 }
+        ],
+        "sortable": true
+      }
+    ]
+  },
+  "limits": {
+    "maxCycles": { "default": 5, "min": 1, "max": 10 },
+    "maxTurns": { "default": 40, "min": 1, "max": 1000 },
+    "llmTimeoutMs": { "default": 60000, "max": 300000 },
+    "turnFloorRole": "reviewer",
+    "turnFloorFormula": "1 + N"
+  },
+  "roles": {
+    "required": ["implementer", "reviewer"],
+    "optional": [],
+    "forbidden": ["worker"],
+    "minCount": {
+      "implementer": 1,
+      "reviewer": 1
+    },
+    "maxCount": {
+      "implementer": 1
+    }
+  },
+  "endpointConstraints": {
+    "requiresLocalParticipant": true,
+    "perRole": {}
+  },
+  "handoff": {
+    "inputs": [
+      { "contract": "spec_bundle.v1", "required": false, "multiple": false },
+      { "contract": "implementation_bundle.v1", "required": false, "multiple": false },
+      { "contract": "test_results.v1", "required": false, "multiple": false }
+    ],
+    "outputs": [
+      { "contract": "review_findings.v1", "default": true },
+      { "contract": "spec_bundle.v1" },
+      { "contract": "implementation_bundle.v1" },
+      { "contract": "test_results.v1" }
+    ],
+    "defaultApprovalMode": "auto"
+  },
+  "display": {
+    "typeLabel": "Quality Room",
+    "typeTag": "QUALITY",
+    "cycleNoun": "Cycle",
+    "reportTitle": "Quality Room Report",
+    "activityMessages": {
+      "idle": "Waiting...",
+      "fanOut": "Quality review in progress",
+      "singleTurn": "Implementer improving quality",
+      "synthesis": "Evaluating current grades",
+      "planning": "Planning..."
+    },
+    "phaseActivityMessages": {
+      "reviewing": "Reviewers grading the implementation",
+      "implementing": "Implementer addressing blockers to A",
+      "converging": "Quality room converged"
+    },
+    "defaultRoster": [
+      { "role": "implementer", "displayName": "Implementer" },
+      { "role": "reviewer", "displayName": "Reviewer 1" }
+    ],
+    "defaultAddRole": "reviewer"
+  },
+  "report": {
+    "summaryMetrics": ["qualitySummary"],
+    "table": {
+      "metricKey": "gradeLog",
+      "columns": [
+        { "key": "reviewer", "label": "Reviewer", "width": 140 },
+        { "key": "overallGrade", "label": "Overall", "width": 80 },
+        { "key": "correctness", "label": "Correctness", "width": 100 },
+        { "key": "simplicity", "label": "Simplicity", "width": 100 },
+        { "key": "maintainability", "label": "Maintainability", "width": 120 },
+        { "key": "verification", "label": "Verification", "width": 100 },
+        { "key": "scopeDiscipline", "label": "Scope", "width": 90 },
+        { "key": "blockers", "label": "Blockers", "width": 80 }
+      ]
+    }
+  },
+  "cli": {
+    "command": "quality-room",
+    "description": "Iteratively raise implementation quality to an A grade",
+    "startParams": [],
+    "statusFields": [
+      { "key": "qualitySummary", "label": "Grades", "format": "counter-group" },
+      { "key": "currentPhase", "label": "Phase", "format": "text", "extract": "active" }
+    ],
+    "computedStatusFields": [
+      {
+        "name": "openBlockers",
+        "label": "Open Blockers",
+        "format": "number",
+        "derive": "metrics.qualitySummary.blockers || 0"
+      }
+    ],
+    "exitCodes": {
+      "cycle_limit": 2,
+      "turn_limit": 2
+    },
+    "statusTemplate": "[{{command}}] {{roomId}}: {{state}} (cycle {{cycle}}/{{maxCycles}}, {{openBlockers}} blockers){{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}",
+    "listTemplate": "{{roomId}}  {{state}}  cycle {{cycle}}/{{maxCycles}}  {{openBlockers}} blockers{{#stopReason}}  [stopReason: {{stopReason}}]{{/stopReason}}{{#age}}  [{{age}}]{{/age}}",
+    "startTemplate": "[{{command}}] started: {{roomId}}",
+    "stopTemplate": "[{{command}}] stopping: {{roomId}}",
+    "skill": {
+      "name": "quality-room",
+      "description": "Grade implementation quality, fix blockers to A, and iterate until convergence",
+      "defaultObjective": "Raise the current implementation to an A quality bar without adding unnecessary scope."
+    }
+  }
+}
